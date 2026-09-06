@@ -581,7 +581,7 @@ function SettingsTab({
       .then(setAutoStart)
       .catch(() => setAutoStart(false));
     getConfig()
-      .then((c) => setWdLaunch(c.wdLaunchOnStart))
+      .then((c) => setWdLaunch(c.wbLaunchOnStart))
       .catch(() => setWdLaunch(false));
   }, []);
 
