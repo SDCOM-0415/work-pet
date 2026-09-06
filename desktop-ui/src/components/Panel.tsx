@@ -9,8 +9,7 @@ import {
   User,
   X,
   Zap,
-  Minus,
-} from "lucide-react";
+  Minus,, Github } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -752,12 +751,23 @@ function AboutTab() {
       <p className="text-sm font-semibold">Work Pet</p>
       <p className="text-[11px] text-muted-foreground">版本 1.0.0</p>
       <p className="max-w-full px-2 text-[11px] leading-4 text-foreground/80">
-        多 AI Agent 签到宠物
+        Work Pet 是多 AI Agent 签到宠物：打开即自动为全部账号签到；
+        多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。
       </p>
-      <p className="max-w-full px-2 text-[10px] leading-4 text-muted-foreground">
-        基于 CDP（Chrome DevTools Protocol）注入实现，
-        支持自动签到、多账号管理与积分到期提醒。
-      </p>
+      <a
+        href="https://github.com/connoryang331/work-pet"
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => {
+          e.preventDefault();
+          invoke("open_external", { url: "https://github.com/connoryang331/work-pet" }).catch(() => {});
+        }}
+        className="mt-1 flex items-center gap-1.5 rounded-full border border-border bg-muted/60 px-3 py-1 text-[10px] text-muted-foreground hover:text-foreground"
+        title="GitHub 仓库"
+      >
+        <Github className="h-3.5 w-3.5" />
+        github.com/connoryang331/work-pet
+      </a>
     </div>
   );
 }

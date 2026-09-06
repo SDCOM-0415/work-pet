@@ -157,6 +157,23 @@ fn daemon_ready(state: tauri::State<BootstrapState>) -> Option<Result<(), String
     state.0.lock().unwrap().clone()
 }
 
+/// 用系统默认浏览器打开外部链接（仅允许 https）
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("仅允许 https 链接".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 面板开合：展开=固定 WIN_H，收起=宠物卡片高度 CARD_H。
 /// 宽度保留用户缩放后的值，保持窗口下缘稳定。积分明细等长内容在列表内部滚动。
 #[tauri::command]
@@ -529,7 +546,8 @@ pub fn run() {
             set_window_visible,
             set_panel_height,
             start_window_drag,
-            quit_app
+            quit_app,
+            open_external
         ])
         .run(tauri::generate_context!())
         .expect("error while running TraeWorkPet");
