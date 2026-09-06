@@ -64,7 +64,7 @@
 
 ## 安装
 
-1. 在 [Releases](../../releases)（或 Actions 构建产物）下载 `WorkPet_0.1.0_x64-setup.exe`
+1. 在 [Releases](../../releases)（或 Actions 构建产物）下载 `WorkPet_1.0.0_x64-setup.exe`
 2. 双击安装器完成安装
 3. 打开 `Work Pet`：首次使用请先在各 AI 客户端登录一次账号，Work Pet 会自动备份进账号库
 

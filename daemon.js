@@ -23,7 +23,7 @@ const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
 const APP_BRAND = 'TraeWork';
-const DAEMON_VERSION = '0.1.0';
+const DAEMON_VERSION = '1.0.0';
 const HOST = '127.0.0.1';
 const CDP_PORT = 9222;
 const UI_PORT = parseInt(process.env.TRAEWORK_UI_PORT || '47921', 10);

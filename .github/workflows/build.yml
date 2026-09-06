@@ -54,5 +54,5 @@ jobs:
         run: |
           $installer = Get-ChildItem -Path "desktop-ui/src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
           if ($installer) {
-            gh release upload v1.0.0 "$($installer.FullName)#WorkPet_0.1.0_x64-setup.exe" --clobber -R ${{ github.repository }}
+            gh release upload v1.0.0 "$($installer.FullName)#WorkPet_1.0.0_x64-setup.exe" --clobber -R ${{ github.repository }}
           }
