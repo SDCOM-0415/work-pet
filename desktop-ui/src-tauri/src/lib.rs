@@ -180,6 +180,11 @@ async fn ensure_workbuddy_daemon() -> Result<(), String> {
     let mut dir = exe_dir.parent().map(|p| p.to_path_buf());
     let mut daemon = None;
     while let Some(d) = dir {
+        let vendored = d.join("vendor").join("wd").join("daemon.js");
+        if vendored.is_file() {
+            daemon = Some(vendored);
+            break;
+        }
         let cand = d.join("WorkDaddy").join("scripts").join("daemon.js");
         if cand.is_file() {
             daemon = Some(cand);
@@ -187,7 +192,7 @@ async fn ensure_workbuddy_daemon() -> Result<(), String> {
         }
         dir = d.parent().map(|p| p.to_path_buf());
     }
-    let daemon = daemon.ok_or("未找到 WorkDaddy scripts/daemon.js")?;
+    let daemon = daemon.ok_or("未找到内置引擎 vendor/wd/daemon.js")?;
     std::process::Command::new("node")
         .arg(&daemon)
         .env("WBSWITCH_PROFILE", "workbuddy-cn")
@@ -213,6 +218,11 @@ async fn ensure_codebuddy_daemon() -> Result<(), String> {
     let mut dir = exe_dir.parent().map(|p| p.to_path_buf());
     let mut daemon = None;
     while let Some(d) = dir {
+        let vendored = d.join("vendor").join("wd").join("daemon.js");
+        if vendored.is_file() {
+            daemon = Some(vendored);
+            break;
+        }
         let cand = d.join("WorkDaddy").join("scripts").join("daemon.js");
         if cand.is_file() {
             daemon = Some(cand);
@@ -220,7 +230,7 @@ async fn ensure_codebuddy_daemon() -> Result<(), String> {
         }
         dir = d.parent().map(|p| p.to_path_buf());
     }
-    let daemon = daemon.ok_or("未找到 WorkDaddy scripts/daemon.js")?;
+    let daemon = daemon.ok_or("未找到内置引擎 vendor/wd/daemon.js")?;
     std::process::Command::new("node")
         .arg(&daemon)
         .env("WBSWITCH_PROFILE", "codebuddy-cn")
