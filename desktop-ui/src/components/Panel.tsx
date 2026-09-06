@@ -71,7 +71,7 @@ export default function Panel(p: PanelProps) {
   const [fontScale, setFontScale] = useState<number>(1);
   const [cbLaunch, setCbLaunch] = useState<boolean>(false);
   const [hidePetState, setHidePetState] = useState<boolean | null>(null);
-  const [wdRefreshTick, setWdRefreshTick] = useState(0); // 100% 基准 = 原 115% 渲染大小
+  const [wbRefreshTick, setWbRefreshTick] = useState(0); // 100% 基准 = 原 115% 渲染大小
   // 标题栏拖动窗口（与宠物卡片拖动同款逻辑）
   const dragRef = useRef<{ sx: number; sy: number; dragging: boolean } | null>(null);
 
@@ -161,7 +161,7 @@ export default function Panel(p: PanelProps) {
           className="h-7 w-7"
           onClick={() => {
             p.onRefresh();
-            setWdRefreshTick((t) => t + 1);
+            setWbRefreshTick((t) => t + 1);
           }}
           title="刷新数据"
         >
@@ -251,7 +251,7 @@ export default function Panel(p: PanelProps) {
             <WorkBuddyTab
               showPhone={!!showPhone}
               kind="wb"
-              refreshTick={wdRefreshTick}
+              refreshTick={wbRefreshTick}
               onLaunch={(force) => invoke("launch_workbuddy", { force: force ?? false }).then(() => undefined)}
             />
           </div>
@@ -260,7 +260,7 @@ export default function Panel(p: PanelProps) {
               showPhone={!!showPhone}
               kind="cb"
               label="CodeBuddy"
-              refreshTick={wdRefreshTick}
+              refreshTick={wbRefreshTick}
               onLaunch={(force) => invoke("launch_codebuddy", { force: force ?? false }).then(() => undefined)}
               onLaunchCli={() => invoke("launch_codebuddy_cli").then(() => undefined)}
             />
@@ -564,7 +564,7 @@ function SettingsTab({
     saveConfig({ cbLaunchOnStart: next }).catch(() => onCbLaunchChange(!next));
   };
   const [launchHost, setLaunchHost] = useState<boolean | null>(null);
-  const [wdLaunch, setWdLaunch] = useState<boolean | null>(null);
+  const [wbLaunch, setWbLaunch] = useState<boolean | null>(null);
   const [saveErr, setSaveErr] = useState(false);
   const [autoStart, setAutoStart] = useState<boolean | null>(null);
 
@@ -576,8 +576,8 @@ function SettingsTab({
       .then(setAutoStart)
       .catch(() => setAutoStart(false));
     getConfig()
-      .then((c) => setWdLaunch(c.wbLaunchOnStart))
-      .catch(() => setWdLaunch(false));
+      .then((c) => setWbLaunch(c.wbLaunchOnStart))
+      .catch(() => setWbLaunch(false));
   }, []);
 
   const toggleShowPhone = () => {
@@ -587,11 +587,11 @@ function SettingsTab({
     saveConfig({ showPhone: next }).catch(() => onShowPhoneChange(!next));
   };
 
-  const toggleWdLaunch = () => {
-    if (wdLaunch === null) return;
-    const next = !wdLaunch;
-    setWdLaunch(next);
-    saveConfig({ wbLaunchOnStart: next }).catch(() => setWdLaunch(!next));
+  const toggleWbLaunch = () => {
+    if (wbLaunch === null) return;
+    const next = !wbLaunch;
+    setWbLaunch(next);
+    saveConfig({ wbLaunchOnStart: next }).catch(() => setWbLaunch(!next));
   };
 
   const toggleAutoStart = () => {
@@ -709,9 +709,9 @@ function SettingsTab({
           </span>
         </div>
         <Switch
-          checked={wdLaunch ?? false}
-          disabled={wdLaunch === null}
-          onCheckedChange={toggleWdLaunch}
+          checked={wbLaunch ?? false}
+          disabled={wbLaunch === null}
+          onCheckedChange={toggleWbLaunch}
           className="ml-auto shrink-0"
         />
       </div>

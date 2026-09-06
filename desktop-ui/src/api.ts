@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
+  ClientAccount,
+  ClientCredits,
+  ClientStatus,
   Entitlement,
   Status,
-  WdAccount,
-  WdCredits,
-  WdStatus,
 } from "./types";
 
 // 服务端高峰限流等临时错误标记（后端注入），前端据此自动重试
@@ -281,7 +281,7 @@ export function launchCodeBuddy(force = false): Promise<void> {
   return invoke<void>("launch_codebuddy", { force });
 }
 
-export function wdStatus(kind: ClientKind): Promise<WdStatus> {
+export function clientStatus(kind: ClientKind): Promise<ClientStatus> {
   return call<any>("GET", `/api/client/${kind}/status`).then((v) => ({
     profile: { id: v?.profile?.id, name: v?.profile?.name },
     batch: { running: Boolean(v?.batch?.running), total: Number(v?.batch?.total ?? 0), done: Number(v?.batch?.done ?? 0) },
@@ -289,9 +289,9 @@ export function wdStatus(kind: ClientKind): Promise<WdStatus> {
   }));
 }
 
-export function wdAccounts(kind: ClientKind): Promise<{
+export function clientAccounts(kind: ClientKind): Promise<{
   currentUid: string | null;
-  accounts: WdAccount[];
+  accounts: ClientAccount[];
 }> {
   return call<any>("GET", `/api/client/${kind}/accounts?checkinStatus=1`).then((v) => ({
     currentUid: v?.currentUid ?? null,
@@ -307,12 +307,12 @@ export function wdAccounts(kind: ClientKind): Promise<{
   }));
 }
 
-/// 触发该客户端全部账号的自动签到（每日缓存幂等），返回与 wdAccounts 相同的数据
-export function wdAccountsClaim(kind: ClientKind) {
-  return wdAccounts(kind);
+/// 触发该客户端全部账号的自动签到（每日缓存幂等），返回与 clientAccounts 相同的数据
+export function clientAccountsClaim(kind: ClientKind) {
+  return clientAccounts(kind);
 }
 
-export function wdCredits(kind: ClientKind, uid: string): Promise<WdCredits> {
+export function clientCredits(kind: ClientKind, uid: string): Promise<ClientCredits> {
   return call<any>("POST", `/api/client/${kind}/credits`, { uid }).then((v) => ({
     credits: Number(v?.credits ?? 0),
     count: Number(v?.count ?? 0),
@@ -327,18 +327,18 @@ export function wdCredits(kind: ClientKind, uid: string): Promise<WdCredits> {
   }));
 }
 
-export function wdSwitch(kind: ClientKind, uid: string): Promise<{ reloaded: boolean; hint: string }> {
+export function clientSwitch(kind: ClientKind, uid: string): Promise<{ reloaded: boolean; hint: string }> {
   return call<any>("POST", `/api/client/${kind}/switch`, { uid }).then((v) => ({
     reloaded: Boolean(v?.reloaded),
     hint: String(v?.hint ?? ""),
   }));
 }
 
-export function wdDelete(kind: ClientKind, uid: string): Promise<void> {
+export function clientDelete(kind: ClientKind, uid: string): Promise<void> {
   return call<any>("POST", `/api/client/${kind}/delete`, { uid }).then(() => undefined);
 }
 
-export function wdBackup(kind: ClientKind): Promise<void> {
+export function clientBackup(kind: ClientKind): Promise<void> {
   return call<any>("GET", `/api/client/${kind}/accounts?checkinStatus=1`).then(() => undefined);
 }
 

@@ -2,7 +2,7 @@
 name = "work-pet"
 version = "0.1.0"
 edition = "2021"
-description = "Work Pet · TraeWork + WorkBuddy 联合签到宠物"
+description = "Work Pet · TraeWork + WorkBuddy + CodeBuddy 联合签到宠物"
 license = "MIT"
 
 [lib]

@@ -4,11 +4,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
-import type { WdAccount, WdCredits } from "@/types";
-import { fmtCredits, wdAccounts, wdAccountsClaim, wdCredits, wdDelete, wdStatus, wdSwitch, type ClientKind } from "@/api";
+import type { ClientAccount, ClientCredits } from "@/types";
+import { fmtCredits, clientAccounts, clientAccountsClaim, clientCredits, clientDelete, clientStatus, clientSwitch, type ClientKind } from "@/api";
 
 /// 签到徽标：兼容对象/字符串两种形态
-function checkinBadge(a: WdAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
+function checkinBadge(a: ClientAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
   const c = a.checkin;
   if (!c) return null;
   if (typeof c === "string") {
@@ -37,10 +37,10 @@ export default function WorkBuddyTab({
   onLaunchCli?: () => Promise<void> | void;
   refreshTick?: number;
 }) {
-  const [accounts, setAccounts] = useState<WdAccount[] | null>(null);
+  const [accounts, setAccounts] = useState<ClientAccount[] | null>(null);
   const [currentUid, setCurrentUid] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [credits, setCredits] = useState<Record<string, WdCredits | "loading" | "error">>({});
+  const [credits, setCredits] = useState<Record<string, ClientCredits | "loading" | "error">>({});
   const [busyUid, setBusyUid] = useState<string | null>(null);
   const [batchRunning, setBatchRunning] = useState(false);
   const [switchedMsg, setSwitchedMsg] = useState<string | null>(null);
@@ -48,11 +48,11 @@ export default function WorkBuddyTab({
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
   const [restartArmed, setRestartArmed] = useState(false);
   const creditsLoadedRef = useRef<Set<string>>(new Set());
-  const accountsRef = useRef<WdAccount[] | null>(null);
+  const accountsRef = useRef<ClientAccount[] | null>(null);
 
   const load = useCallback(async (withClaim: boolean) => {
     try {
-      const v = await (withClaim ? wdAccountsClaim(kind) : wdAccounts(kind));
+      const v = await (withClaim ? clientAccountsClaim(kind) : clientAccounts(kind));
       setAccounts(v.accounts);
       setCurrentUid(v.currentUid ?? null);
       setError(null);
@@ -110,7 +110,7 @@ export default function WorkBuddyTab({
     const tick = async () => {
       if (stop) return;
       try {
-        const st = await wdStatus(kind);
+        const st = await clientStatus(kind);
         const running = !!st.batch?.running;
         setBatchRunning(running);
         // 批量进行中、或签到状态还没拿到（批量期间接口返回 null）时，立即刷新
@@ -147,7 +147,7 @@ export default function WorkBuddyTab({
         creditsLoadedRef.current.add(a.uid);
         setCredits((c) => ({ ...c, [a.uid]: "loading" }));
         try {
-          const v = await wdCredits(kind, a.uid);
+          const v = await clientCredits(kind, a.uid);
           setCredits((c) => ({ ...c, [a.uid]: v }));
         } catch {
           setCredits((c) => ({ ...c, [a.uid]: "error" }));
@@ -178,7 +178,7 @@ export default function WorkBuddyTab({
       return n;
     });
     try {
-      await wdDelete(kind, uid);
+      await clientDelete(kind, uid);
       creditsLoadedRef.current.delete(uid);
       setCredits((c) => {
         const n = { ...c };
@@ -211,8 +211,8 @@ export default function WorkBuddyTab({
           setSwitchedMsg("后台服务未运行，无法启动客户端");
         }
       } else {
-        await wdSwitch(kind, uid);
-        const st = await wdStatus(kind).catch(() => null);
+        await clientSwitch(kind, uid);
+        const st = await clientStatus(kind).catch(() => null);
         const cdpUp = !!(st && (st as { cdp?: { connected?: boolean } }).cdp?.connected);
         if (cdpUp) {
           setSwitchedMsg(`已切换到该账号，窗口已刷新生效；再点一次其按钮可启动 ${label}`);

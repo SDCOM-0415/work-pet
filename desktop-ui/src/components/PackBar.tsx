@@ -94,7 +94,7 @@ export function PackBar({ packs }: { packs: Entitlement[] }) {
 }
 
 /// WorkBuddy/CodeBuddy 积分分段积分条（按到期时间归类）
-export function WdSegmentBar({
+export function ClientSegmentBar({
   segments,
 }: {
   segments: { remaining: number; total: number; expiresAt: number; source: string }[];

@@ -567,7 +567,7 @@ function collectExportAccounts() {
   const store = loadStore();
   const traeworkAccounts = store.traework.accounts;
   // WorkBuddy / CodeBuddy：账号备份为原始登录文件内容，uid 取自 account.uid
-  const collectWd = (dir) => {
+  const collectInfoFiles = (dir) => {
     const out = [];
     try {
       for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.info') && !f.endsWith('.tmp') && !f.includes('.logged-out'))) {
@@ -590,11 +590,11 @@ function collectExportAccounts() {
     },
     workbuddy: {
       current: readJsonOrNull(WB_AUTH_FILE),
-      accounts: collectWd(WB_ACCOUNTS_DIR),
+      accounts: collectInfoFiles(WB_ACCOUNTS_DIR),
     },
     codebuddy: {
       current: readJsonOrNull(CB_AUTH_FILE),
-      accounts: collectWd(CB_ACCOUNTS_DIR),
+      accounts: collectInfoFiles(CB_ACCOUNTS_DIR),
     },
   };
   // 把引擎目录的最新账号状态同步回单文件账号库，保证 WorkPet-accounts.json 始终完整

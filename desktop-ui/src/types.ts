@@ -43,35 +43,35 @@ export interface Entitlement {
 
 // ---------------- WorkBuddy / CodeBuddy 数据模型 ----------------
 
-export interface WdCheckin {
+export interface ClientCheckin {
   ok?: boolean;
   already?: boolean;
   code?: number;
   message?: string;
 }
 
-export interface WdAccount {
+export interface ClientAccount {
   uid: string;
   nickname: string;
   phone?: string;
   tokenExpiresAt?: number; // ms
-  checkin?: WdCheckin | string | null;
+  checkin?: ClientCheckin | string | null;
 }
 
-export interface WdSegment {
+export interface ClientSegment {
   remaining: number;
   total: number;
   expiresAt: number; // ms
   source: string;
 }
 
-export interface WdCredits {
+export interface ClientCredits {
   credits: number;
   count?: number;
-  segments: WdSegment[];
+  segments: ClientSegment[];
 }
 
-export interface WdStatus {
+export interface ClientStatus {
   profile?: { id?: string; name?: string };
   batch?: { running?: boolean; total?: number; done?: number };
   cdp?: { connected?: boolean };

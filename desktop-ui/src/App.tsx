@@ -14,7 +14,7 @@ import {
   refreshEntitlements,
   refreshStatus,
   switchAccount,
-  wdAccountsClaim,
+  clientAccountsClaim,
   launchCodeBuddy,
   getConfig,
   saveConfig,
@@ -332,7 +332,7 @@ export default function App() {
           break;
         case "claim":
           startAutoClaimAllRef.current(); // TraeWork 全部账号
-          void wdAccountsClaim("wb").catch(() => {});
+          void clientAccountsClaim("wb").catch(() => {});
           break;
         case "theme":
           setThemeDark((d) => !d);
@@ -395,11 +395,11 @@ export default function App() {
                 showBubble("双端全部签到开始…", 3200);
                 startAutoClaimAllRef.current(); // TraeWork 全部账号
                 try {
-                  void wdAccountsClaim("wb").catch(() => {});
+                  void clientAccountsClaim("wb").catch(() => {});
                 } catch {}
                 try {
                   
-                  void wdAccountsClaim("cb").catch(() => {});
+                  void clientAccountsClaim("cb").catch(() => {});
                 } catch {}
               })()
             }
@@ -489,8 +489,8 @@ export default function App() {
                 label: "全部签到",
                 fn: () => {
                   startAutoClaimAllRef.current();
-                  void wdAccountsClaim("wb").catch(() => {});
-                  void wdAccountsClaim("cb").catch(() => {});
+                  void clientAccountsClaim("wb").catch(() => {});
+                  void clientAccountsClaim("cb").catch(() => {});
                 },
               },
               {
