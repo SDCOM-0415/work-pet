@@ -42,7 +42,7 @@
     ],
     "resources": [
       "vendor/wd/**/*",
-      "../daemon.js"
+      "../../daemon.js"
     ]
   }
 }
