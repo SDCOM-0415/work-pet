@@ -41,8 +41,8 @@
       "icons/128x128.png"
     ],
     "resources": [
-      "../../daemon.js",
-      "../../credit-segments.js",
+      "daemon.js",
+      "credit-segments.js",
       "binaries/node.exe"
     ]
   }

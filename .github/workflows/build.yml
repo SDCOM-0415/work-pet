@@ -23,11 +23,13 @@ jobs:
         with:
           workspaces: desktop-ui/src-tauri
 
-      - name: Bundle Node.js runtime (users don't need to install Node)
+      - name: Bundle Node.js runtime and scripts (flat packaging)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path desktop-ui/src-tauri/binaries | Out-Null
           Copy-Item "C:/Program Files/nodejs/node.exe" desktop-ui/src-tauri/binaries/node.exe
+          Copy-Item "daemon.js" desktop-ui/src-tauri/daemon.js
+          Copy-Item "credit-segments.js" desktop-ui/src-tauri/credit-segments.js
 
       - name: Install dependencies
         working-directory: desktop-ui

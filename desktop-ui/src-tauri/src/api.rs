@@ -152,23 +152,29 @@ pub fn daemon_reachable() -> bool {
     r.call().is_ok()
 }
 
-/// 在候选目录里查找 daemon.js。
-fn find_daemon_js_in(dir: &Path) -> Option<std::path::PathBuf> {
-    let mut dir = Some(dir.to_path_buf());
-    while let Some(d) = dir {
-        let candidate = d.join("daemon.js");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        dir = d.parent().map(|p| p.to_path_buf());
-    }
-    None
-}
-
-/// 从 exe 所在目录向上逐级查找 daemon.js（exe 可能与 daemon.js 同包，或在子目录）。
+/// 在候选目录及常见资源子目录里查找 daemon.js。
 fn find_daemon_js() -> Option<std::path::PathBuf> {
     let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    find_daemon_js_in(&exe_dir)
+    let candidates = [
+        exe_dir.join("daemon.js"),
+        exe_dir.join("_up_").join("_up_").join("daemon.js"),
+        exe_dir.join("resources").join("daemon.js"),
+    ];
+    for c in &candidates {
+        if c.is_file() {
+            return Some(c.clone());
+        }
+    }
+    // 向上逐级兜底查找（针对开发调试模式）
+    let mut d = Some(exe_dir);
+    while let Some(dir) = d {
+        let c = dir.join("daemon.js");
+        if c.is_file() {
+            return Some(c);
+        }
+        d = dir.parent().map(|p| p.to_path_buf());
+    }
+    None
 }
 
 /// 在常见安装位置定位 node.exe。
