@@ -456,6 +456,10 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
                 "claim" => "claim",
                 "theme" => "theme",
                 "quit" => {
+                    api::stop_daemon();
+                    if let Some(tray) = app.tray_by_id("main") {
+                        let _ = tray.set_visible(false);
+                    }
                     app.exit(0);
                     return;
                 }

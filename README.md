@@ -2,7 +2,7 @@
 
 **语言：** 简体中文
 
-> **Work Pet 是多 AI Agent 签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。账号与配置全部留在本机。**
+> **Work Pet 是多 AI Agent（WorkBuddy、CodeBuddy、TraeWork）签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。账号与配置全部留在本机。**
 > 本机回环 CDP 注入 · 不改官方安装包 · 安装后无需 Node.js / Python 环境
 
 一个基于 **Chrome DevTools Protocol (CDP)** 的多 AI 编程客户端增强工具。
