@@ -23,6 +23,7 @@ import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
 import traeworkIcon from "@/assets/traework.png";
 import workbuddyIcon from "@/assets/workbuddy.png";
 import codebuddyIcon from "@/assets/codebuddy.png";
+import rewardQR from "@/assets/buy-me-token.png";
 import type { Account, Entitlement, Status, UpdateInfo } from "@/types";
 import { fmtCredits } from "@/api";
 import { cn } from "@/lib/utils";
@@ -751,61 +752,76 @@ function SettingsTab({
 
 function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-center">
-      <img src={robotIcon} alt="Work Pet" className="h-14 w-14" draggable={false} />
-      <p className="text-sm font-semibold">Work Pet</p>
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">当前版本 {updateInfo?.currentVersion || 'v1.0.0'}</span>
-        {updateInfo?.hasUpdate ? (
-          <Badge className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/30 text-[10px] px-1.5 py-0">
-            发现新版 {updateInfo.latestVersion}
-          </Badge>
-        ) : (
-          <span className="text-[10px] text-muted-foreground/60">(最新)</span>
-        )}
-      </div>
-
-      {updateInfo?.hasUpdate && (
-        <div className="mx-2 mt-1 flex flex-col items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-foreground/90">
-          <div className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-            🎉 发现新版本 {updateInfo.latestVersion}
-          </div>
-          {updateInfo.title && (
-            <div className="text-[10px] text-muted-foreground line-clamp-1">
-              {updateInfo.title}
-            </div>
+    <ScrollArea className="h-full w-full pr-1">
+      <div className="flex flex-col items-center justify-center gap-2.5 px-2 py-1 text-center">
+        <img src={robotIcon} alt="Work Pet" className="h-12 w-12" draggable={false} />
+        <p className="text-sm font-semibold">Work Pet</p>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">当前版本 {updateInfo?.currentVersion || 'v1.0.0'}</span>
+          {updateInfo?.hasUpdate ? (
+            <Badge className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/30 text-[10px] px-1.5 py-0">
+              发现新版 {updateInfo.latestVersion}
+            </Badge>
+          ) : (
+            <span className="text-[10px] text-muted-foreground/60">(最新)</span>
           )}
-          <Button
-            size="sm"
-            className="mt-1 h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3"
-            onClick={() => {
-              invoke("open_external", { url: updateInfo.url || "https://github.com/connoryang331/work-pet/releases/latest" }).catch(() => {});
-            }}
-          >
-            前往下载更新
-          </Button>
         </div>
-      )}
 
-      <p className="max-w-full px-2 text-[11px] leading-4 text-foreground/80">
-        Work Pet 是多 AI Agent 签到宠物：打开即自动为全部账号签到；
-        多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。
-      </p>
-      <a
-        href="https://github.com/connoryang331/work-pet"
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={(e) => {
-          e.preventDefault();
-          invoke("open_external", { url: "https://github.com/connoryang331/work-pet" }).catch(() => {});
-        }}
-        className="mt-1 flex items-center gap-1.5 rounded-full border border-border bg-muted/60 px-3 py-1 text-[10px] text-muted-foreground hover:text-foreground"
-        title="GitHub 仓库"
-      >
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .3z"/></svg>
-        github.com/connoryang331/work-pet
-      </a>
-    </div>
+        {updateInfo?.hasUpdate && (
+          <div className="mx-2 mt-0.5 flex flex-col items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-foreground/90">
+            <div className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+              🎉 发现新版本 {updateInfo.latestVersion}
+            </div>
+            {updateInfo.title && (
+              <div className="text-[10px] text-muted-foreground line-clamp-1">
+                {updateInfo.title}
+              </div>
+            )}
+            <Button
+              size="sm"
+              className="mt-1 h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3"
+              onClick={() => {
+                invoke("open_external", { url: updateInfo.url || "https://github.com/connoryang331/work-pet/releases/latest" }).catch(() => {});
+              }}
+            >
+              前往下载更新
+            </Button>
+          </div>
+        )}
+
+        <p className="max-w-full px-2 text-[11px] leading-4 text-foreground/80">
+          Work Pet 是多 AI Agent 签到宠物：打开即自动为全部账号签到；
+          多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。
+        </p>
+
+        <a
+          href="https://github.com/connoryang331/work-pet"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            e.preventDefault();
+            invoke("open_external", { url: "https://github.com/connoryang331/work-pet" }).catch(() => {});
+          }}
+          className="flex items-center gap-1.5 rounded-full border border-border bg-muted/60 px-3 py-1 text-[10px] text-muted-foreground hover:text-foreground"
+          title="GitHub 仓库"
+        >
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .3z"/></svg>
+          github.com/connoryang331/work-pet
+        </a>
+
+        {/* 打赏支持 */}
+        <div className="mt-1 flex w-full flex-col items-center rounded-xl border border-border/80 bg-muted/30 p-2.5">
+          <span className="text-[11px] font-medium text-foreground/90">🧧 Buy me token（赞赏支持）</span>
+          <span className="mt-0.5 text-[9px] text-muted-foreground">如果 Work Pet 对你有帮助，欢迎为作者充点 token</span>
+          <img
+            src={rewardQR}
+            alt="赞赏码"
+            className="mt-2 max-w-[200px] rounded-lg border border-border/50 shadow-sm"
+            draggable={false}
+          />
+        </div>
+      </div>
+    </ScrollArea>
   );
 }
 
