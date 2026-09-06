@@ -59,4 +59,7 @@ WorkBuddy / CodeBuddy 端的引擎已**内置**（`desktop-ui/src-tauri/vendor/w
 
 ## 📄 License
 
-[MIT](./LICENSE)
+[AGPL-3.0](./LICENSE)
+
+WorkBuddy/CodeBuddy 端的签到、积分解析与注入架构移植自 [WorkDaddy](https://github.com/babygoton/WorkDaddy)（AGPL-3.0），
+因此本项目同样以 AGPL-3.0 发布：任何修改（包括仅作为网络服务运行）都必须开源。
