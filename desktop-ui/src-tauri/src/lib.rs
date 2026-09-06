@@ -33,21 +33,6 @@ async fn daemon_call(method: String, path: String, body: Option<String>) -> Resu
 
 /// 转发一次 WorkDaddy daemon HTTP 请求（自动带本地 token）。
 /// port: 47832=WorkBuddy profile；47835=CodeBuddy profile。
-#[tauri::command]
-async fn wd_call(
-    method: String,
-    path: String,
-    body: Option<String>,
-    port: Option<u16>,
-) -> Result<Value, String> {
-    let port = port.unwrap_or(47832);
-    tauri::async_runtime::spawn_blocking(move || {
-        api::do_wd_request(&method, port, &path, body.as_deref())
-    })
-    .await
-    .map_err(|e| format!("内部错误: {e}"))?
-}
-
 /// CodeBuddy 可执行文件定位（常见安装路径）。
 #[cfg(target_os = "windows")]
 fn resolve_codebuddy_exe() -> Option<PathBuf> {
@@ -166,83 +151,6 @@ fn launch_codebuddy_cli() -> Result<(), String> {
     }
     #[cfg(not(target_os = "windows"))]
     Err("仅支持 Windows".to_string())
-}
-
-/// 确保 WorkBuddy profile 的 WorkDaddy daemon（端口 47832）在运行。
-/// 签到/账号是纯 HTTP 调用，不需要启动 WorkBuddy 客户端——daemon 无头即可工作；
-/// CDP 注入仅在客户端以调试模式运行时才发生，客户端没开也不影响签到。
-#[tauri::command]
-async fn ensure_workbuddy_daemon() -> Result<(), String> {
-    if api::wd_reachable_port(47832) {
-        return Ok(());
-    }
-    let exe_dir = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut dir = exe_dir.parent().map(|p| p.to_path_buf());
-    let mut daemon = None;
-    while let Some(d) = dir {
-        let vendored = d.join("vendor").join("wd").join("daemon.js");
-        if vendored.is_file() {
-            daemon = Some(vendored);
-            break;
-        }
-        let cand = d.join("WorkDaddy").join("scripts").join("daemon.js");
-        if cand.is_file() {
-            daemon = Some(cand);
-            break;
-        }
-        dir = d.parent().map(|p| p.to_path_buf());
-    }
-    let daemon = daemon.ok_or("未找到内置引擎 vendor/wd/daemon.js")?;
-    std::process::Command::new("node")
-        .arg(&daemon)
-        .env("WBSWITCH_PROFILE", "workbuddy-cn")
-        .env("WBSWITCH_PORT", "47832")
-        .env("WBSWITCH_CDP_PORT", "9222")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("启动 WorkBuddy daemon 失败: {e}"))
-}
-
-/// 确保 CodeBuddy profile 的 WorkDaddy daemon（端口 47835）在运行；
-/// 该 daemon 会经 CDP 把面板注入进 CodeBuddy 窗口并自动备份/签到。
-#[tauri::command]
-async fn ensure_codebuddy_daemon() -> Result<(), String> {
-    if api::wd_reachable_port(47835) {
-        return Ok(());
-    }
-    let exe_dir = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut dir = exe_dir.parent().map(|p| p.to_path_buf());
-    let mut daemon = None;
-    while let Some(d) = dir {
-        let vendored = d.join("vendor").join("wd").join("daemon.js");
-        if vendored.is_file() {
-            daemon = Some(vendored);
-            break;
-        }
-        let cand = d.join("WorkDaddy").join("scripts").join("daemon.js");
-        if cand.is_file() {
-            daemon = Some(cand);
-            break;
-        }
-        dir = d.parent().map(|p| p.to_path_buf());
-    }
-    let daemon = daemon.ok_or("未找到内置引擎 vendor/wd/daemon.js")?;
-    std::process::Command::new("node")
-        .arg(&daemon)
-        .env("WBSWITCH_PROFILE", "codebuddy-cn")
-        .env("WBSWITCH_PORT", "47835")
-        .env("WBSWITCH_CDP_PORT", "9224")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("启动 CodeBuddy daemon 失败: {e}"))
 }
 
 /// 查询 daemon 自举是否完成（前端启动时轮询，避免错过一次性事件）。
@@ -613,14 +521,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             daemon_call,
-            wd_call,
             is_autostart_enabled,
             set_autostart,
             launch_workbuddy,
             launch_codebuddy,
             launch_codebuddy_cli,
-            ensure_codebuddy_daemon,
-            ensure_workbuddy_daemon,
             daemon_ready,
             set_panel_open,
             set_window_visible,

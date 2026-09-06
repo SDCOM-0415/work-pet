@@ -274,85 +274,75 @@ export function fmtExpiry(ts: string | null | undefined): string {
 
 // ---------------- WorkBuddy（复用 WorkDaddy 本地 daemon，端口 47832） ----------------
 
-async function wdCall<T>(
-  method: "GET" | "POST",
-  path: string,
-  body?: unknown,
-  port = 47832,
-): Promise<T> {
-  return invoke<T>("wd_call", {
-    method,
-    path,
-    body: body === undefined ? null : JSON.stringify(body),
-    port,
-  });
-}
 
 /// WorkDaddy 状态（公开接口，无需 token；用于可达性探测）
-export function wdStatus(port = 47832): Promise<WdStatus> {
-  return wdCall<any>("GET", "/api/status", undefined, port).then((v) => ({
-    profile: v?.profile,
-    batch: v?.batch,
-    cdp: v?.cdp,
-  }));
-}
+// ---------------- WorkBuddy / CodeBuddy（WorkPet daemon 原生支持） ----------------
 
-/// 账号列表（触发全量自动签到，每日缓存幂等）
-export function wdAccountsClaim(port = 47832): Promise<{ current: WdAccount | null; accounts: WdAccount[] }> {
-  return wdCall<any>("GET", "/api/accounts", undefined, port).then((v) => ({
-    current: v?.current ?? null,
-    accounts: Array.isArray(v?.accounts) ? v.accounts : [],
-  }));
-}
+export type ClientKind = "wb" | "cb";
 
-/// 账号列表（仅读缓存，不触发签到）
-export function wdAccounts(port = 47832): Promise<{ current: WdAccount | null; accounts: WdAccount[] }> {
-  return wdCall<any>("GET", "/api/accounts?checkinStatus=1", undefined, port).then((v) => ({
-    current: v?.current ?? null,
-    accounts: Array.isArray(v?.accounts) ? v.accounts : [],
-  }));
-}
-
-/// 查询某账号剩余积分（含分段时间明细）
-export function wdCredits(uid: string, port = 47832): Promise<WdCredits> {
-  return wdCall<any>("POST", "/api/credits", { uid }, port).then((v) => ({
-    credits: Number(v?.credits ?? 0),
-    count: Number(v?.count ?? 0),
-    segments: Array.isArray(v?.segments) ? v.segments : [],
-  }));
-}
-
-/// 删除 WorkBuddy 账号备份（不影响当前登录）
-export function wdDelete(uid: string, port = 47832): Promise<void> {
-  return wdCall<void>("POST", "/api/delete", { uid }, port).then(() => undefined);
-}
-
-/// 切换账号（reload=false：仅切换登录文件，重启 WorkBuddy 后生效）
-export function wdSwitch(uid: string, port = 47832): Promise<void> {
-  return wdCall<void>("POST", "/api/switch", { uid, reload: false }, port).then(() => undefined);
-}
-
-/// 立即备份 WorkBuddy 当前登录账号（WorkDaddy daemon）
-/// 以 CDP 模式拉起 WorkBuddy（已在运行时不重复启动）
-export function launchWorkBuddy(): Promise<void> {
-  return invoke<void>("launch_workbuddy");
-}
-
-/// 以 CDP 模式拉起 CodeBuddy（9224 端口；WorkDaddy codebuddy-cn profile 用）
+/// 以 CDP 模式拉起 CodeBuddy 客户端
 export function launchCodeBuddy(force = false): Promise<void> {
   return invoke<void>("launch_codebuddy", { force });
 }
 
-/// 确保 CodeBuddy profile 的 WorkDaddy daemon（47835）在运行
-export function ensureCodeBuddyDaemon(): Promise<void> {
-  return invoke<void>("ensure_codebuddy_daemon");
+export function wdStatus(kind: ClientKind): Promise<WdStatus> {
+  return call<any>("GET", `/api/client/${kind}/status`).then((v) => ({
+    profile: { id: v?.profile?.id, name: v?.profile?.name },
+    batch: { running: Boolean(v?.batch?.running), total: Number(v?.batch?.total ?? 0), done: Number(v?.batch?.done ?? 0) },
+    cdp: { connected: Boolean(v?.cdp?.connected) },
+  }));
 }
 
-/// 在新控制台窗口启动 CodeBuddy CLI
-export function launchCodeBuddyCli(): Promise<void> {
-  return invoke<void>("launch_codebuddy_cli");
+export function wdAccounts(kind: ClientKind): Promise<{
+  currentUid: string | null;
+  accounts: WdAccount[];
+}> {
+  return call<any>("GET", `/api/client/${kind}/accounts?checkinStatus=1`).then((v) => ({
+    currentUid: v?.currentUid ?? null,
+    accounts: Array.isArray(v?.accounts)
+      ? v.accounts.map((a: any) => ({
+          uid: String(a.uid ?? ""),
+          nickname: String(a.nickname ?? ""),
+          phone: String(a.phone ?? ""),
+          tokenExpiresAt: a.tokenExpiresAt ?? undefined,
+          checkin: a.checkin ?? null,
+        }))
+      : [],
+  }));
 }
 
-export function wdBackup(port = 47832): Promise<void> {
-  return wdCall<void>("POST", "/api/backup", undefined, port).then(() => undefined);
+/// 触发该客户端全部账号的自动签到（每日缓存幂等），返回与 wdAccounts 相同的数据
+export function wdAccountsClaim(kind: ClientKind) {
+  return wdAccounts(kind);
 }
+
+export function wdCredits(kind: ClientKind, uid: string): Promise<WdCredits> {
+  return call<any>("POST", `/api/client/${kind}/credits`, { uid }).then((v) => ({
+    credits: Number(v?.credits ?? 0),
+    count: Number(v?.count ?? 0),
+    segments: Array.isArray(v?.segments)
+      ? v.segments.map((seg: any) => ({
+          remaining: Number(seg?.remaining ?? 0),
+          total: Number(seg?.total ?? 0),
+          expiresAt: seg?.expiresAt ?? 0,
+          source: String(seg?.source ?? ""),
+        }))
+      : [],
+  }));
+}
+
+export function wdSwitch(kind: ClientKind, uid: string): Promise<{ reloaded: boolean; hint: string }> {
+  return call<any>("POST", `/api/client/${kind}/switch`, { uid }).then((v) => ({
+    reloaded: Boolean(v?.reloaded),
+    hint: String(v?.hint ?? ""),
+  }));
+}
+
+export function wdDelete(kind: ClientKind, uid: string): Promise<void> {
+  return call<any>("POST", `/api/client/${kind}/delete`, { uid }).then(() => undefined);
+}
+
+export function wdBackup(kind: ClientKind): Promise<void> {
+  return call<any>("GET", `/api/client/${kind}/accounts?checkinStatus=1`).then(() => undefined);
+}
+

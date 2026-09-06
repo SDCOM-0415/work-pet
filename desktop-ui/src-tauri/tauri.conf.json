@@ -41,7 +41,6 @@
       "icons/128x128.png"
     ],
     "resources": [
-      "vendor/wd/**/*",
       "../../daemon.js"
     ]
   }

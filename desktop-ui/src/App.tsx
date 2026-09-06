@@ -15,9 +15,7 @@ import {
   refreshStatus,
   switchAccount,
   wdAccountsClaim,
-  ensureCodeBuddyDaemon,
   launchCodeBuddy,
-  wdStatus,
   getConfig,
   saveConfig,
   exportAllAccounts,
@@ -297,8 +295,6 @@ export default function App() {
   // 不需要启动客户端本体；daemon 无头工作即可提供账号/签到/积分能力）
   useEffect(() => {
     if (bootstrap !== "ready") return;
-    invoke("ensure_workbuddy_daemon").catch(() => {});
-    ensureCodeBuddyDaemon().catch(() => {});
   }, [bootstrap]);
 
   // 就绪后按设置决定是否同时启动 WorkBuddy（仅当 WorkDaddy 在运行时才有意义）
@@ -310,7 +306,7 @@ export default function App() {
           void launchCodeBuddy().catch(() => {});
         }
         if (!c.wdLaunchOnStart) return;
-        return wdStatus().then(() => invoke("launch_workbuddy")).catch(() => {});
+        return invoke("launch_workbuddy").catch(() => {});
       })
       .catch(() => {});
   }, [bootstrap]);
@@ -336,7 +332,7 @@ export default function App() {
           break;
         case "claim":
           startAutoClaimAllRef.current(); // TraeWork 全部账号
-          void wdAccountsClaim().catch(() => {}); // WorkBuddy 全部账号
+          void wdAccountsClaim("wb").catch(() => {});
           break;
         case "theme":
           setThemeDark((d) => !d);
@@ -399,11 +395,11 @@ export default function App() {
                 showBubble("双端全部签到开始…", 3200);
                 startAutoClaimAllRef.current(); // TraeWork 全部账号
                 try {
-                  await wdAccountsClaim(); // WorkBuddy 全部账号（WorkDaddy 每日幂等）
+                  void wdAccountsClaim("wb").catch(() => {});
                 } catch {}
                 try {
-                  await ensureCodeBuddyDaemon(); // CodeBuddy 全部账号（独立 profile）
-                  await wdAccountsClaim(47835);
+                  
+                  void wdAccountsClaim("cb").catch(() => {});
                 } catch {}
               })()
             }
@@ -493,9 +489,8 @@ export default function App() {
                 label: "全部签到",
                 fn: () => {
                   startAutoClaimAllRef.current();
-                  void wdAccountsClaim().catch(() => {});
-                  void ensureCodeBuddyDaemon().catch(() => {});
-                  void wdAccountsClaim(47835).catch(() => {});
+                  void wdAccountsClaim("wb").catch(() => {});
+                  void wdAccountsClaim("cb").catch(() => {});
                 },
               },
               {

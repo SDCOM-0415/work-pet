@@ -702,6 +702,315 @@ async function restoreBackupData(data) {
   return counts;
 }
 
+
+// ================= WB/CB 客户端支持（原生实现，替代外部引擎） =================
+// WorkBuddy / CodeBuddy 的账号备份、切换、签到、积分查询全部由本 daemon 原生完成：
+// 登录态 = CodeBuddyExtension 扩展 auth 文件（两个客户端各一条独立通道）；
+// 账号库 = WorkPet-accounts.json 的 workbuddy/codebuddy 段；
+// 签到/积分 = 各端 apiHost 的 HTTP 接口（Bearer accessToken）。
+
+const { extractCreditSegments, sortCreditSegments } = require('./credit-segments.js');
+
+const CLIENT_PROFILES = {
+  wb: {
+    id: 'wb', name: 'WorkBuddy',
+    authFile: WB_AUTH_FILE,
+    apiHost: 'https://www.workbuddy.cn',
+    checkinHosts: ['https://www.workbuddy.cn', 'https://www.codebuddy.cn'],
+    cdpPort: 9222,
+  },
+  cb: {
+    id: 'cb', name: 'CodeBuddy',
+    authFile: CB_AUTH_FILE,
+    apiHost: 'https://www.codebuddy.cn',
+    checkinHosts: ['https://www.codebuddy.cn'],
+    cdpPort: 9224,
+  },
+};
+const CLIENT_CHECKIN_CACHE_FILE = path.join(DATA_ROOT, 'client-checkin-cache.json');
+const clientCheckinState = {
+  wb: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
+  cb: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
+};
+
+function clientLoadCheckinCache(profileId) {
+  try {
+    const all = JSON.parse(fs.readFileSync(CLIENT_CHECKIN_CACHE_FILE, 'utf8'));
+    return all[profileId] || {};
+  } catch (_) { return {}; }
+}
+function clientSaveCheckinCache(profileId, cache) {
+  try {
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(CLIENT_CHECKIN_CACHE_FILE, 'utf8')); } catch (_) {}
+    all[profileId] = cache;
+    const tmp = CLIENT_CHECKIN_CACHE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(all, null, 2));
+    fs.renameSync(tmp, CLIENT_CHECKIN_CACHE_FILE);
+  } catch (_) {}
+}
+
+/** 读取客户端当前登录（auth 文件为唯一真相） */
+function clientReadAuth(profileId) {
+  const raw = readJsonOrNull(CLIENT_PROFILES[profileId].authFile);
+  if (!raw || !raw.account || !raw.account.uid) return null;
+  return raw;
+}
+
+/** 把当前登录同步进账号库（登录文件变化时调用） */
+function clientSyncStore(profileId) {
+  const raw = clientReadAuth(profileId);
+  if (!raw) return;
+  const store = loadStore();
+  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
+  const uid = String(raw.account.uid);
+  const idx = sec.accounts.findIndex((a) => a && a.account && String(a.account.uid) === uid);
+  if (idx >= 0) sec.accounts[idx] = raw;
+  else sec.accounts.push(raw);
+  sec.current = raw;
+  saveStore(store);
+}
+
+/** 列出客户端全部账号 + 当前登录（当前以 auth 文件为准） */
+function clientListAccounts(profileId) {
+  clientSyncStore(profileId);
+  const store = loadStore();
+  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
+  const currentRaw = clientReadAuth(profileId);
+  const currentUid = currentRaw && currentRaw.account ? String(currentRaw.account.uid) : null;
+  const seen = new Set();
+  const list = [];
+  const push = (raw) => {
+    if (!raw || !raw.account) return;
+    const uid = String(raw.account.uid);
+    if (seen.has(uid)) return;
+    seen.add(uid);
+    const auth = raw.auth || {};
+    list.push({
+      uid,
+      nickname: raw.account.nickname || '',
+      phone: raw.account.phoneNumber || '',
+      uin: raw.account.uin || '',
+      tokenExpiresAt: auth.expiresAt || null,
+      refreshExpiresAt: auth.refreshExpiresAt || null,
+      lastRefreshTime: auth.lastRefreshTime || null,
+    });
+  };
+  if (currentRaw) push(currentRaw);
+  for (const a of sec.accounts) push(a);
+  list.sort((a, b) => (a.uid === currentUid ? -1 : b.uid === currentUid ? 1 : 0));
+  const cache = clientLoadCheckinCache(profileId);
+  const today = todayStrLocal();
+  return {
+    currentUid,
+    accounts: list.map((a) => {
+      const rec = cache[a.uid];
+      return Object.assign(a, {
+        checkin: rec && rec.date === today && !clientCheckinState[profileId].inFlight
+          ? { ok: !!rec.ok, already: !!rec.already, code: rec.code, message: rec.message }
+          : null,
+      });
+    }),
+  };
+}
+
+function clientTokenFor(profileId, uid) {
+  const raw = clientReadAuth(profileId);
+  if (raw && String(raw.account.uid) === String(uid)) return raw.auth && raw.auth.accessToken;
+  const store = loadStore();
+  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
+  const rec = sec.accounts.find((a) => a && a.account && String(a.account.uid) === String(uid));
+  return rec && rec.auth ? rec.auth.accessToken : null;
+}
+
+async function clientDailyCheckin(profileId, accessToken) {
+  const profile = CLIENT_PROFILES[profileId];
+  let lastErr = null;
+  for (const host of profile.checkinHosts) {
+    for (const cpath of ['/billing/meter/daily-checkin', '/v2/billing/meter/daily-checkin']) {
+      try {
+        const r = await fetch(host + cpath, {
+          method: 'POST',
+          headers: {
+            accept: 'application/json, text/plain, */*',
+            'content-type': 'application/json',
+            'x-client-platform': 'web',
+            origin: profile.apiHost,
+            referer: profile.apiHost + '/profile/plans-usage',
+            authorization: 'Bearer ' + accessToken,
+            'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+          },
+          body: '{}',
+          signal: AbortSignal.timeout(12000),
+        });
+        const text = await r.text();
+        let o = {};
+        try { o = JSON.parse(text); } catch (_) {}
+        const code = o.code;
+        const already = code === 10001;
+        const deviceLimit = /已经签到/.test(o.msg || o.message || '');
+        if (already || deviceLimit || (r.ok && (code === 0 || code === undefined))) {
+          return { ok: true, already, deviceLimit, code, message: o.msg || o.message || 'ok' };
+        }
+        if (r.status === 401) return { ok: false, code, message: '登录身份过期' };
+        if (r.status >= 400 && r.status !== 404) return { ok: false, code, message: 'HTTP ' + r.status };
+        lastErr = o.msg || o.message || ('HTTP ' + r.status);
+      } catch (e) {
+        lastErr = e.message;
+      }
+    }
+  }
+  return { ok: false, message: lastErr || '签到失败' };
+}
+
+async function clientClaimDailyForAll(profileId) {
+  const st = clientCheckinState[profileId];
+  if (st.inFlight) return { skipped: true, reason: 'in-flight' };
+  const accounts = clientListAccounts(profileId).accounts;
+  if (!accounts.length) return { skipped: true, reason: 'no-accounts' };
+  st.inFlight = true;
+  st.running = true;
+  st.total = accounts.length;
+  st.done = 0;
+  st.startedAt = Date.now();
+  st.finishedAt = 0;
+  const cache = clientLoadCheckinCache(profileId);
+  const today = todayStrLocal();
+  try {
+    for (const a of accounts) {
+      const hit = cache[a.uid];
+      if (hit && hit.date === today && hit.ok) { st.done++; continue; }
+      const tk = clientTokenFor(profileId, a.uid);
+      let rec;
+      if (!tk) rec = { date: today, ok: false, code: -1, message: '无 accessToken' };
+      else {
+        const r = await clientDailyCheckin(profileId, tk);
+        rec = { date: today, ok: !!r.ok, already: !!r.already, deviceLimit: !!r.deviceLimit, code: r.code, message: r.message || '' };
+      }
+      cache[a.uid] = rec;
+      clientSaveCheckinCache(profileId, cache);
+      st.done++;
+      log('[client:' + profileId + '] ' + a.nickname + ' 签到: ' + (rec.ok ? (rec.already ? '已签' : '成功') : rec.message));
+    }
+  } finally {
+    st.inFlight = false;
+    st.running = false;
+    st.finishedAt = Date.now();
+  }
+  return { total: st.total, done: st.done };
+}
+
+/** 积分查询（移植自 WorkDaddy credit-resource-queries + fetchResource） */
+function clientBuildResourceBody(now) {
+  now = now || new Date();
+  const end = new Date(now.getTime());
+  end.setFullYear(end.getFullYear() + 101);
+  const pad = (v) => String(v).padStart(2, '0');
+  const f = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  return {
+    PageNumber: 1, PageSize: 100, ProductCode: 'p_tcaca', Status: [0, 3],
+    PackageEndTimeRangeBegin: f(now), PackageEndTimeRangeEnd: f(end),
+  };
+}
+
+async function clientFetchCredits(profileId, accessToken) {
+  const profile = CLIENT_PROFILES[profileId];
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await fetch(profile.apiHost + '/v2/billing/meter/get-user-resource', {
+        method: 'POST',
+        headers: {
+          accept: 'application/json, text/plain, */*',
+          'content-type': 'application/json',
+          'x-client-platform': 'web',
+          origin: profile.apiHost,
+          referer: profile.apiHost + '/profile/plans-usage',
+          authorization: 'Bearer ' + accessToken,
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+        },
+        body: JSON.stringify(clientBuildResourceBody()),
+        signal: AbortSignal.timeout(12000),
+      });
+      const text = await r.text();
+      let o;
+      try { o = JSON.parse(text); } catch (e) { throw new Error('解析积分响应失败: ' + e.message); }
+      if (!r.ok) throw new Error('积分接口 HTTP ' + r.status + ': ' + text.slice(0, 120));
+      if (o.code !== 0 && o.code !== undefined) throw new Error(o.msg || ('积分接口返回 code=' + o.code));
+      const data = (o.data && o.data.Response && o.data.Response.Data) ||
+        (o.data && o.data.data && o.data.data.Response && o.data.data.Response.Data) || null;
+      const accounts = (data && Array.isArray(data.Accounts) ? data.Accounts : null) ||
+        (o.data && Array.isArray(o.data.accounts) ? o.data.accounts : null) ||
+        (o.data && o.data.data && Array.isArray(o.data.data.accounts) ? o.data.data.accounts : null) || [];
+      if (accounts.length === 0 && attempt < 3) { await sleep(300 * attempt); continue; }
+      let credits = 0;
+      for (const a of accounts) {
+        const cands = [a.CycleCapacityRemainPrecise, a.CycleCapacityRemain, a.CapacityRemainPrecise, a.CapacityRemain];
+        for (const c of cands) {
+          if (c === undefined || c === null || c === '') continue;
+          const v = Number(c);
+          if (Number.isFinite(v)) { credits = v; break; }
+        }
+        if (credits > 0) break;
+      }
+      let segments = sortCreditSegments(extractCreditSegments(accounts, '积分'));
+      const visible = segments.reduce((sum, x) => sum + x.remaining, 0);
+      if (credits > visible + 0.01) {
+        segments = sortCreditSegments([
+          ...segments,
+          { remaining: credits - visible, total: credits - visible, expiresAt: null, source: '其他积分' },
+        ]);
+      }
+      return { credits: credits, count: accounts.length, totalDosage: 0, segments: segments };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) await sleep(300 * attempt);
+    }
+  }
+  throw lastErr || new Error('积分查询失败');
+}
+
+/** CDP 刷新客户端页面（客户端以调试模式运行时） */
+async function clientReloadViaCdp(profileId) {
+  const profile = CLIENT_PROFILES[profileId];
+  let list;
+  try {
+    const r = await fetch('http://127.0.0.1:' + profile.cdpPort + '/json/list', { signal: AbortSignal.timeout(2000) });
+    list = await r.json();
+  } catch (_) { return false; }
+  const page = (Array.isArray(list) ? list : []).find(
+    (t) => t.type === 'page' && /workbench(\.html)?|vscode-file/i.test(String(t.url || ''))
+  );
+  if (!page || !page.webSocketDebuggerUrl) return false;
+  return new Promise((resolve) => {
+    let ws = null;
+    const finish = (v) => { clearTimeout(timer); try { ws && ws.close(); } catch (_) {} resolve(v); };
+    const timer = setTimeout(() => finish(false), 6000);
+    try { ws = new WebSocket(page.webSocketDebuggerUrl); } catch (e) { return finish(false); }
+    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Page.reload', params: {} }));
+    ws.onmessage = (ev) => {
+      try {
+        const d = JSON.parse(ev.data);
+        if (d.id === 1) finish(true);
+      } catch (_) {}
+    };
+    ws.onerror = () => finish(false);
+  });
+}
+
+// 登录文件变化 → 同步进账号库（每次打开/切换客户端都会重写 auth 文件）
+for (const pid of ['wb', 'cb']) {
+  try {
+    fs.watchFile(CLIENT_PROFILES[pid].authFile, { interval: 5000 }, (cur, prev) => {
+      if (!fs.existsSync(CLIENT_PROFILES[pid].authFile)) return;
+      if (cur.mtimeMs !== prev.mtimeMs) {
+        try { clientSyncStore(pid); log('[client:' + pid + '] 登录文件变化，已同步账号库'); } catch (_) {}
+      }
+    });
+  } catch (_) {}
+}
+
+
 async function rotateAllAccounts({ claim }) {
   // 收集所有客户端登录态 + 备份当前账号，保证账号库完整
   try { collectAllTraeAccounts(); } catch (_) {}
@@ -1100,6 +1409,77 @@ const server = http.createServer(async (req, res) => {
           : null,
       }));
       return sendJson(res, 200, { ok: true, current, accounts, deviceClaimDate: store.deviceClaimDate || null });
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/client/')) {
+      const parts = url.pathname.split('/');
+      const pid = parts[3];
+      if (!CLIENT_PROFILES[pid]) return sendJson(res, 404, { ok: false, error: 'unknown client' });
+      if (parts[4] === 'status') {
+        const st = clientCheckinState[pid];
+        let cdpConnected = false;
+        try {
+          const r = await fetch('http://127.0.0.1:' + CLIENT_PROFILES[pid].cdpPort + '/json/version', { signal: AbortSignal.timeout(1500) });
+          cdpConnected = r.ok;
+        } catch (_) {}
+        return sendJson(res, 200, {
+          ok: true,
+          profile: { id: pid, name: CLIENT_PROFILES[pid].name },
+          batch: { running: st.running, total: st.total, done: st.done },
+          cdp: { connected: cdpConnected },
+        });
+      }
+      if (parts[4] === 'accounts') {
+        clientClaimDailyForAll(pid).catch((e) => log('[client:' + pid + '] 自动签到失败: ' + e.message));
+        const list = clientListAccounts(pid);
+        return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
+      }
+      return sendJson(res, 404, { ok: false, error: 'not found' });
+    }
+    if (req.method === 'POST' && url.pathname.startsWith('/api/client/')) {
+      const parts = url.pathname.split('/');
+      const pid = parts[3];
+      if (!CLIENT_PROFILES[pid]) return sendJson(res, 404, { ok: false, error: 'unknown client' });
+      const body = await readBody(req);
+      if (parts[4] === 'credits') {
+        const uid = (body.uid || '').trim();
+        const tk = clientTokenFor(pid, uid);
+        if (!tk) return sendJson(res, 404, { ok: false, error: '账号备份不存在或无 accessToken' });
+        try {
+          const r = await clientFetchCredits(pid, tk);
+          return sendJson(res, 200, { ok: true, uid, credits: r.credits, count: r.count, segments: r.segments });
+        } catch (e) {
+          log('[client:' + pid + '] 积分查询失败 ' + uid + ': ' + e.message);
+          return sendJson(res, 500, { ok: false, error: e.message });
+        }
+      }
+      if (parts[4] === 'switch') {
+        const uid = (body.uid || '').trim();
+        const store = loadStore();
+        const sec = store[pid === 'wb' ? 'workbuddy' : 'codebuddy'];
+        const raw = sec.accounts.find((a) => a && a.account && String(a.account.uid) === String(uid));
+        if (!raw) return sendJson(res, 404, { ok: false, error: '账号备份不存在' });
+        try {
+          const tmp = CLIENT_PROFILES[pid].authFile + '.tmp';
+          fs.writeFileSync(tmp, JSON.stringify(raw, null, 2));
+          fs.renameSync(tmp, CLIENT_PROFILES[pid].authFile);
+          clientSyncStore(pid);
+          const reloaded = await clientReloadViaCdp(pid);
+          log('[client:' + pid + '] 已切换账号 ' + (raw.account.nickname || uid) + (reloaded ? '（CDP 已刷新）' : ''));
+          return sendJson(res, 200, { ok: true, uid, reloaded, hint: reloaded ? '已切换并刷新窗口' : '登录文件已切换，重启客户端后生效' });
+        } catch (e) {
+          return sendJson(res, 500, { ok: false, error: e.message });
+        }
+      }
+      if (parts[4] === 'delete') {
+        const uid = (body.uid || '').trim();
+        const store = loadStore();
+        const sec = store[pid === 'wb' ? 'workbuddy' : 'codebuddy'];
+        const before = sec.accounts.length;
+        sec.accounts = sec.accounts.filter((a) => a && a.account && String(a.account.uid) !== String(uid));
+        saveStore(store);
+        return sendJson(res, 200, { ok: true, deleted: before - sec.accounts.length });
+      }
+      return sendJson(res, 404, { ok: false, error: 'not found' });
     }
     if (req.method === 'POST' && url.pathname === '/api/backup/export') {
       try {

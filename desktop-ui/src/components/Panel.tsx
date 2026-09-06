@@ -250,6 +250,7 @@ export default function Panel(p: PanelProps) {
           <div className={cn("min-h-0 flex-1 flex-col", tab === "wb" ? "flex" : "hidden")}>
             <WorkBuddyTab
               showPhone={!!showPhone}
+              kind="wb"
               refreshTick={wdRefreshTick}
               onLaunch={(force) => invoke("launch_workbuddy", { force: force ?? false }).then(() => undefined)}
             />
@@ -257,7 +258,7 @@ export default function Panel(p: PanelProps) {
           <div className={cn("min-h-0 flex-1 flex-col", tab === "cb" ? "flex" : "hidden")}>
             <WorkBuddyTab
               showPhone={!!showPhone}
-              port={47835}
+              kind="cb"
               label="CodeBuddy"
               refreshTick={wdRefreshTick}
               onLaunch={(force) =>
