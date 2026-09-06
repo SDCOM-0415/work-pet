@@ -21,3 +21,4 @@ desktop-ui/.vite/
 *.bak
 .dbg-*
 debug-claim.js
+client-checkin-cache.json
