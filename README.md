@@ -2,7 +2,7 @@
 
 **多 AI Agent 签到宠物** —— 一个常驻桌面的透明小宠物，自动为多个 AI 编程客户端完成每日签到、多账号管理与积分到期提醒。
 
-基于 **CDP（Chrome DevTools Protocol）注入**实现，支持自动签到、多账号管理与积分到期提醒。以后还会接入更多 AI 端。
+全部功能基于 **CDP（Chrome DevTools Protocol）注入**实现——后台无头服务经 CDP 连接各 AI 客户端，完成自动签到、多账号管理与积分到期提醒，无需打开客户端本体。以后还会接入更多 AI 端。
 
 ## ✨ 功能
 
@@ -47,19 +47,6 @@ npm run dev
 - **导出**：点击面板右上角 💾，在安装根目录生成 `WorkPet-accounts-<时间戳>.json`
 - **恢复**：设置 → 账号备份/恢复 → 「从 JSON 文件恢复…」，选择备份文件即可
 - 适合换机迁移：把 JSON 拷到新电脑，装好 Work Pet 后选择文件恢复，无需重新登录
-
-## 🙏 运行依赖
-
-WorkBuddy / CodeBuddy 端的账号备份与面板注入复用 [WorkDaddy](https://github.com/babygoton/WorkDaddy) 常驻服务。
-请将 WorkDaddy 安装/克隆到 WorkPet 的**同级目录**（`../WorkDaddy`），Work Pet 会自动发现并拉起它：
-
-```
-Pets/
-├── WorkPet/     ← 本项目
-└── WorkDaddy/   ← 上游项目（见 patches/ 目录的本地修改）
-```
-
-`patches/` 目录保存了本仓库对 WorkDaddy 的本地修改（Trusted Types 兼容、CodeBuddy 独立账号通道等），供更新上游后重新应用。
 
 ## ⚠️ 免责声明
 
