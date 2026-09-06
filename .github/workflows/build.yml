@@ -8,6 +8,8 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -42,3 +44,13 @@ jobs:
           path: |
             desktop-ui/src-tauri/target/release/work-pet.exe
             desktop-ui/src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: Update v1.0.0 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $installer = Get-ChildItem -Path "desktop-ui/src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if ($installer) {
+            gh release upload v1.0.0 "$($installer.FullName)#WorkPet_0.1.0_x64-setup.exe" --clobber -R ${{ github.repository }}
+          }
