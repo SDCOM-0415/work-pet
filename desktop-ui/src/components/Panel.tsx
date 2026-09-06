@@ -9,7 +9,9 @@ import {
   User,
   X,
   Zap,
-  Minus,, Github } from "lucide-react";
+  Minus,
+  Github,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
