@@ -97,6 +97,14 @@
 
 ---
 
+## 🙏 致谢
+
+- [智谱 Z.ai](https://z.ai/) —— 本程序的**全部代码**由 [ZCode](https://zcode.z.ai/)（GLM-5.3 官方 Harness）在
+  **3 亿 Token 周末免费构建活动**期间完成：从架构设计、CDP 注入引擎、三端签到逻辑到桌面宠物 UI。
+- [WorkDaddy](https://github.com/babygoton/WorkDaddy) —— WorkBuddy/CodeBuddy 端签到与积分解析逻辑的移植来源（AGPL-3.0）。
+
+---
+
 ## 许可与声明
 
 本项目采用 **[GNU Affero General Public License v3.0](LICENSE)** 开源（`SPDX-License-Identifier: AGPL-3.0-or-later`）。
