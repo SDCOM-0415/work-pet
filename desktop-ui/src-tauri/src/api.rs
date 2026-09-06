@@ -1,0 +1,328 @@
+//! 与本地 daemon (http://127.0.0.1:47921) 的 HTTP 通信 + 自举。
+//! 由 Tauri command 以 spawn_blocking 调用（阻塞请求不卡 UI 线程）。
+//! 仅访问纯 HTTP 本地地址，故 ureq 关闭 TLS 特性（default-features = false）。
+
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub const API_BASE: &str = "http://127.0.0.1:47921";
+
+/// 读取 WorkPet daemon 的本地 API token（daemon.js 同目录 .api-token）。
+/// daemon 首次启动时生成；读不到时返回 None（请求将收到 401，重试即可）。
+fn pet_token() -> Option<String> {
+    let daemon = find_daemon_js()?;
+    let file = daemon.parent()?.join(".api-token");
+    let t = std::fs::read_to_string(file).ok()?;
+    let t = t.trim().to_string();
+    if t.is_empty() { None } else { Some(t) }
+}
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+// CREATE_NO_WINDOW：后台拉起 node（控制台应用）时不弹出黑窗口
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub type ApiResult = Result<Value, String>;
+
+/// 发起一次 daemon 请求；业务失败统一转为 Err（临时限流错误带 RETRY 标记，
+/// 由前端按「自动重试」处理）。
+pub fn do_request(method: &str, path: &str, body: Option<&str>) -> ApiResult {
+    let url = format!("{API_BASE}{path}");
+
+    // ureq 3.4：ConfigBuilder 设置每请求总超时（switch 会重启 TraeWork，给足时间）
+    let mut cb = ureq::Agent::config_builder();
+    cb = cb.timeout_connect(Some(Duration::from_secs(4)));
+    let per_call = if path.starts_with("/api/accounts/switch") {
+        Duration::from_secs(40)
+    } else {
+        Duration::from_secs(12)
+    };
+    cb = cb.timeout_global(Some(per_call));
+    // 不把 HTTP 状态码当 Error，统一拿到 body 再按 {ok} 判断业务失败
+    cb = cb.http_status_as_error(false);
+    let agent = ureq::Agent::new_with_config(cb.build());
+
+    let token = pet_token();
+    let result = match method {
+        "GET" => {
+            let mut r = agent.get(&url);
+            if let Some(t) = &token {
+                r = r.header("X-WorkPet-Token", t);
+            }
+            r.call()
+        }
+        "POST" => {
+            let mut rb = agent.post(&url).content_type("application/json");
+            if let Some(t) = &token {
+                rb = rb.header("X-WorkPet-Token", t);
+            }
+            match body {
+                Some(b) => rb.send(b.to_string()),
+                None => rb.send_empty(),
+            }
+        }
+        _ => return Err(format!("不支持的方法 {method}")),
+    };
+
+    match result {
+        Ok(resp) => {
+            let code = resp.status().as_u16();
+            let text = match resp.into_body().read_to_string() {
+                Ok(s) => s,
+                Err(e) => return Err(format!("读取 daemon 响应失败: {e}")),
+            };
+            match serde_json::from_str::<Value>(&text) {
+                Ok(v) => {
+                    if (200..300).contains(&code) {
+                        // 统一按 {ok:...} 结构判断业务成功
+                        if v.get("ok").and_then(|b| b.as_bool()).unwrap_or(true) {
+                            Ok(v)
+                        } else {
+                            let err = v
+                                .get("error")
+                                .and_then(|e| e.as_str())
+                                .unwrap_or("未知错误")
+                                .to_string();
+                            Err(err)
+                        }
+                    } else {
+                        // 业务失败：可能带 retryable 标记（签到高峰限流等临时错误）
+                        let retryable = v
+                            .get("retryable")
+                            .and_then(|b| b.as_bool())
+                            .unwrap_or(false);
+                        let err = v
+                            .get("error")
+                            .and_then(|e| e.as_str())
+                            .or_else(|| {
+                                v.get("data").and_then(|d| {
+                                    d.get("message")
+                                        .and_then(|m| m.as_str())
+                                        .or_else(|| d.get("msg").and_then(|m| m.as_str()))
+                                })
+                            })
+                            .unwrap_or("请求失败")
+                            .to_string();
+                        if retryable {
+                            Err(format!("\u{0001}RETRY\u{0001}{err}"))
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
+                Err(_) => Err(format!("响应解析失败 (HTTP {code}): {text}")),
+            }
+        }
+        Err(e) => Err(format!("daemon 未连接: {e}")),
+    }
+}
+
+/// 快速探测 daemon 是否已就绪。
+pub fn daemon_reachable() -> bool {
+    let mut cb = ureq::Agent::config_builder();
+    cb = cb.timeout_connect(Some(Duration::from_secs(2)));
+    cb = cb.timeout_global(Some(Duration::from_secs(3)));
+    cb = cb.http_status_as_error(false);
+    let agent = ureq::Agent::new_with_config(cb.build());
+    let mut r = agent.get(&format!("{API_BASE}/api/health"));
+    if let Some(t) = pet_token() {
+        r = r.header("X-WorkPet-Token", &t);
+    }
+    r.call().is_ok()
+}
+
+// ---------------- WorkBuddy（复用 WorkDaddy 本地 daemon） ----------------
+
+pub const WD_API_BASE: &str = "http://127.0.0.1:47832";
+/// CodeBuddy profile 的 WorkDaddy daemon（独立实例，独立端口/数据目录）
+pub const WD_CB_API_BASE: &str = "http://127.0.0.1:47835";
+
+/// 按 profile 返回 daemon 基址与 token 文件路径
+fn wd_base_and_token(port: u16) -> (String, PathBuf) {
+    let appdata = std::env::var("APPDATA").unwrap_or_default();
+    let base_dir = if port == 47835 {
+        // CodeBuddy profile：数据目录在 profiles 子目录
+        Path::new(&appdata).join("WorkDaddy").join("profiles").join("codebuddy-cn")
+    } else {
+        Path::new(&appdata).join("WorkDaddy")
+    };
+    let base = if port == 47835 { WD_CB_API_BASE } else { WD_API_BASE };
+    (base.to_string(), base_dir.join(".api-token"))
+}
+
+/// 读取 WorkDaddy 本地 API token（由其 watchdog 生成）。
+fn wd_token(port: u16) -> Result<String, String> {
+    let (_, token_file) = wd_base_and_token(port);
+    std::fs::read_to_string(&token_file)
+        .map(|s| s.trim().to_string())
+        .map_err(|_| "未找到 WorkDaddy API token，请先安装并启动 WorkDaddy".to_string())
+}
+
+/// WorkDaddy daemon 是否可达（不要求 token，探测其公开的 /api/status）。
+pub fn wd_reachable_port(port: u16) -> bool {
+    let mut cb = ureq::Agent::config_builder();
+    cb = cb.timeout_connect(Some(Duration::from_secs(2)));
+    cb = cb.timeout_global(Some(Duration::from_secs(3)));
+    let agent = ureq::Agent::new_with_config(cb.build());
+    agent
+        .get(&format!("http://127.0.0.1:{port}/api/status"))
+        .call()
+        .is_ok()
+}
+
+#[allow(dead_code)]
+pub fn wd_reachable() -> bool {
+    let mut cb = ureq::Agent::config_builder();
+    cb = cb.timeout_connect(Some(Duration::from_secs(2)));
+    cb = cb.timeout_global(Some(Duration::from_secs(3)));
+    cb = cb.http_status_as_error(false);
+    let agent = ureq::Agent::new_with_config(cb.build());
+    agent
+        .get(&format!("{WD_API_BASE}/api/status"))
+        .call()
+        .is_ok()
+}
+
+/// 转发一次 WorkDaddy daemon 请求（自动带 X-WorkDaddy-Token）。
+/// port 47832=WorkBuddy profile；47835=CodeBuddy profile。
+pub fn do_wd_request(method: &str, port: u16, path: &str, body: Option<&str>) -> ApiResult {
+    let token = wd_token(port)?;
+    let (base, _) = wd_base_and_token(port);
+    let url = format!("{base}{path}");
+
+    let mut cb = ureq::Agent::config_builder();
+    cb = cb.timeout_connect(Some(Duration::from_secs(4)));
+    cb = cb.timeout_global(Some(Duration::from_secs(60)));
+    cb = cb.http_status_as_error(false);
+    let agent = ureq::Agent::new_with_config(cb.build());
+
+    let result = match method {
+        "GET" => agent.get(&url).header("X-WorkDaddy-Token", &token).call(),
+        "POST" => {
+            let rb = agent
+                .post(&url)
+                .header("X-WorkDaddy-Token", &token)
+                .content_type("application/json");
+            match body {
+                Some(b) => rb.send(b.to_string()),
+                None => rb.send_empty(),
+            }
+        }
+        _ => return Err(format!("不支持的方法 {method}")),
+    };
+
+    match result {
+        Ok(resp) => {
+            let code = resp.status().as_u16();
+            let text = match resp.into_body().read_to_string() {
+                Ok(s) => s,
+                Err(e) => return Err(format!("读取 WorkDaddy 响应失败: {e}")),
+            };
+            match serde_json::from_str::<Value>(&text) {
+                Ok(v) => {
+                    if (200..300).contains(&code) {
+                        if v.get("ok").and_then(|b| b.as_bool()).unwrap_or(true) {
+                            Ok(v)
+                        } else {
+                            Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("未知错误").to_string())
+                        }
+                    } else {
+                        Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("请求失败").to_string())
+                    }
+                }
+                Err(_) => Err(format!("响应解析失败 (HTTP {code})")),
+            }
+        }
+        Err(e) => Err(format!("WorkDaddy 未连接: {e}")),
+    }
+}
+
+/// 在候选目录里查找 daemon.js。
+fn find_daemon_js_in(dir: &Path) -> Option<std::path::PathBuf> {
+    let mut dir = Some(dir.to_path_buf());
+    while let Some(d) = dir {
+        let candidate = d.join("daemon.js");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+    None
+}
+
+/// 从 exe 所在目录向上逐级查找 daemon.js（exe 可能与 daemon.js 同包，或在子目录）。
+fn find_daemon_js() -> Option<std::path::PathBuf> {
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    find_daemon_js_in(&exe_dir)
+}
+
+/// 在常见安装位置定位 node.exe。
+fn find_node() -> String {
+    let mut v: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        v.push(Path::new(&pf).join("nodejs").join("node.exe"));
+    }
+    if let Ok(pf32) = std::env::var("ProgramFiles(x86)") {
+        v.push(Path::new(&pf32).join("nodejs").join("node.exe"));
+    }
+    if let Ok(la) = std::env::var("LOCALAPPDATA") {
+        v.push(Path::new(&la).join("Programs").join("nodejs").join("node.exe"));
+    }
+    for p in v {
+        if p.is_file() {
+            if let Some(s) = p.to_str() {
+                return s.to_string();
+            }
+        }
+    }
+    "node".to_string()
+}
+
+/// 隐藏后台拉起 daemon 子进程；detached 常驻，退出桌面端后继续运行。
+/// 不经 shell：Command 参数列表式调用，node 路径来自固定安装位置探测，
+/// 脚本路径来自 exe 同级目录逐级上溯，均无外部输入参与。
+fn spawn_daemon() -> Result<(), String> {
+    let daemon = find_daemon_js()
+        .ok_or_else(|| "未找到 daemon.js（请保持 daemon.js 与桌面客户端同包）".to_string())?;
+    let node = find_node();
+
+    let mut cmd = std::process::Command::new(node);
+    cmd.arg(&daemon);
+    // 便携数据目录：账号备份/设置/积分缓存存到 exe 同目录（不写 C 盘 AppData）
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .as_ref()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
+        cmd.env("TRAEWORK_PET_DATA_DIR", &exe_dir);
+    }
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| format!("启动后台服务失败: {e}"))
+}
+
+/// 确保 daemon 在运行：已在则直接返回；否则定位并后台拉起 node daemon.js，等待就绪。
+/// 若多个 exe 同时启动，daemon 已对端口冲突做过容错（EADDRINUSE 退出），属正常。
+pub fn ensure_daemon() -> Result<(), String> {
+    if daemon_reachable() {
+        return Ok(());
+    }
+    spawn_daemon()?;
+    // 等待 daemon 起来；最多 ~15s，轮询 health
+    std::thread::sleep(Duration::from_millis(500));
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        if daemon_reachable() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(800));
+    }
+    Err("后台服务启动超时，请确认已安装 Node.js".to_string())
+}

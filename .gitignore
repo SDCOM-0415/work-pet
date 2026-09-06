@@ -1,0 +1,23 @@
+# ===== 账号数据 / 隐私（绝不上传）=====
+accounts/
+WorkPet-accounts*.json
+.api-token
+*.log
+config.json
+credits.json
+
+# ===== 依赖与构建产物 =====
+node_modules/
+dist/
+desktop-ui/src-tauri/target/
+desktop-ui/src-tauri/gen/
+
+# ===== 系统/编辑器 =====
+.DS_Store
+Thumbs.db
+desktop-ui/.vite/
+
+# ===== 调试/临时文件 =====
+*.bak
+.dbg-*
+debug-claim.js
