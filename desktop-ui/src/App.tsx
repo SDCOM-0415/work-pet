@@ -305,7 +305,7 @@ export default function App() {
         if (c.cbLaunchOnStart) {
           void launchCodeBuddy().catch(() => {});
         }
-        if (!(c.wbLaunchOnStart ?? c.wdLaunchOnStart)) return;
+        if (!c.wbLaunchOnStart) return;
         return invoke("launch_workbuddy").catch(() => {});
       })
       .catch(() => {});
