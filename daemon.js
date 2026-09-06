@@ -405,7 +405,7 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, showPhone: false, fontScale: 1 };
+const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'accounts'] };
 function loadSettings() {
   try {
     return Object.assign({}, SETTING_DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
@@ -1558,7 +1558,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       const s = loadSettings();
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'accounts', 'cb'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
     }
     if (req.method === 'POST' && url.pathname === '/api/config') {
       const body = await readBody(req);
@@ -1570,13 +1570,13 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.cbLaunchOnStart === 'boolean') patch.cbLaunchOnStart = body.cbLaunchOnStart;
       if (typeof body.hidePet === 'boolean') patch.hidePet = body.hidePet;
       if (Array.isArray(body.tabOrder)) {
-        const known = ['accounts', 'wb', 'cb'];
+        const known = ['wb', 'cb', 'accounts'];
         const order = Array.from(new Set(body.tabOrder.map((t) => String(t))).values()).filter((t) => known.includes(t));
         if (order.length === known.length) patch.tabOrder = order;
       }
       const s = saveSettings(patch);
       log('[config] 已保存设置: ' + JSON.stringify(patch));
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'accounts', 'cb'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
     }
     return sendJson(res, 404, { ok: false, error: 'not found' });
   } catch (e) {

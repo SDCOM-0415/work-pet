@@ -55,9 +55,9 @@ interface PanelProps {
 type Tab = "accounts" | "wb" | "cb" | "settings" | "about";
 
 const MAIN_TABS: { key: Tab; label: string; img: string }[] = [
-  { key: "accounts", label: "TraeWork", img: traeworkIcon },
   { key: "wb", label: "WorkBuddy", img: workbuddyIcon },
   { key: "cb", label: "CodeBuddy", img: codebuddyIcon },
+  { key: "accounts", label: "TraeWork", img: traeworkIcon },
 ];
 const ICON_TABS: { key: Tab; label: string; icon: typeof User }[] = [
   { key: "settings", label: "设置", icon: Settings },
@@ -66,7 +66,7 @@ const ICON_TABS: { key: Tab; label: string; icon: typeof User }[] = [
 
 export default function Panel(p: PanelProps) {
   const [tab, setTab] = useState<Tab>("wb");
-  const [tabOrder, setTabOrder] = useState<Tab[]>(["wb", "accounts", "cb"]);
+  const [tabOrder, setTabOrder] = useState<Tab[]>(["wb", "cb", "accounts"]);
   const dragTabRef = useRef<Tab | null>(null);
   const [fontScale, setFontScale] = useState<number>(1);
   const [cbLaunch, setCbLaunch] = useState<boolean>(false);
