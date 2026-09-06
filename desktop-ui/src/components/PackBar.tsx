@@ -93,7 +93,7 @@ export function PackBar({ packs }: { packs: Entitlement[] }) {
   return <ExpiryBar items={packs} />;
 }
 
-/// WorkDaddy 积分分段积分条（按到期时间归类，蓝色区分）
+/// WorkBuddy/CodeBuddy 积分分段积分条（按到期时间归类）
 export function WdSegmentBar({
   segments,
 }: {

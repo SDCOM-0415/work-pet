@@ -261,12 +261,7 @@ export default function Panel(p: PanelProps) {
               kind="cb"
               label="CodeBuddy"
               refreshTick={wdRefreshTick}
-              onLaunch={(force) =>
-                (async () => {
-                  await invoke("ensure_codebuddy_daemon").catch(() => {});
-                  await invoke("launch_codebuddy", { force: force ?? false });
-                })()
-              }
+              onLaunch={(force) => invoke("launch_codebuddy", { force: force ?? false }).then(() => undefined)}
               onLaunchCli={() => invoke("launch_codebuddy_cli").then(() => undefined)}
             />
           </div>
@@ -710,7 +705,7 @@ function SettingsTab({
         <div className="flex min-w-0 flex-col">
           <span className="text-xs font-medium">打开 Pet 时同时启动 WorkBuddy</span>
           <span className="text-[10px] text-muted-foreground">
-            以调试模式拉起 WorkBuddy（供 WorkDaddy 使用）
+            以调试模式拉起 WorkBuddy 客户端
           </span>
         </div>
         <Switch

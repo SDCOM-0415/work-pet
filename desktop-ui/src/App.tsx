@@ -209,7 +209,7 @@ export default function App() {
     [armed, arm, refreshAll, showBubble]
   );
 
-  // 备份所有账号：TraeWork 跨客户端收集全部登录 + WorkDaddy 保存双端当前登录
+  // 备份所有账号：三端账号统一导出到 WorkPet-accounts-<时间戳>.json
   const doBackup = useCallback(async () => {
     try {
       const r = await exportAllAccounts();
@@ -297,7 +297,7 @@ export default function App() {
     if (bootstrap !== "ready") return;
   }, [bootstrap]);
 
-  // 就绪后按设置决定是否同时启动 WorkBuddy（仅当 WorkDaddy 在运行时才有意义）
+  // 就绪后按设置决定是否同时启动 WorkBuddy 客户端
   useEffect(() => {
     if (bootstrap !== "ready") return;
     getConfig()

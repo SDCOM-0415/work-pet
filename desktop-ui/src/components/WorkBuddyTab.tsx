@@ -7,7 +7,7 @@ import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
 import type { WdAccount, WdCredits } from "@/types";
 import { fmtCredits, wdAccounts, wdAccountsClaim, wdCredits, wdDelete, wdStatus, wdSwitch, type ClientKind } from "@/api";
 
-/// 签到徽标：兼容 WorkDaddy 的对象/字符串两种形态
+/// 签到徽标：兼容对象/字符串两种形态
 function checkinBadge(a: WdAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
   const c = a.checkin;
   if (!c) return null;
@@ -118,7 +118,7 @@ export default function WorkBuddyTab({
         if (running || missing) await load(false);
       } catch {
         // daemon 可能刚被 ensure 拉起：静默重读一次，成功即自动恢复显示
-        // （WorkDaddy 的 /api/accounts 本身会触发自动签到，带每日缓存幂等）
+        // （/api/client/:id/accounts 本身会触发自动签到，带每日缓存幂等）
         try { await load(false); } catch {}
       }
     };
@@ -130,14 +130,14 @@ export default function WorkBuddyTab({
     };
   }, [load]);
 
-  // 首次打开即触发 WorkDaddy 全量自动签到（每日缓存幂等），空闲期低频轮询
+  // 首次打开即触发全量自动签到（每日缓存幂等），空闲期轮询跟进
   useEffect(() => {
     void load(true);
     const t = window.setInterval(() => void load(false), 120_000);
     return () => window.clearInterval(t);
   }, [load]);
 
-  // 每账号积分懒加载（串行，避免瞬时打满 WorkDaddy）
+  // 每账号积分懒加载（串行，避免瞬时请求过密）
   const accountsKey = accounts?.map((a) => a.uid).join(",") ?? "";
   useEffect(() => {
     if (!accounts) return;
@@ -222,7 +222,7 @@ export default function WorkBuddyTab({
         await load(false);
       }
     } catch {
-      setSwitchedMsg("切换失败，请确认 WorkDaddy 正常运行");
+      setSwitchedMsg("切换失败，请确认 Work Pet 后台服务正常");
     } finally {
       setBusyUid(null);
     }
@@ -232,13 +232,7 @@ export default function WorkBuddyTab({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
         <p className="text-xs text-muted-foreground">
-          {/未连接/.test(error)
-            ? label === "CodeBuddy"
-              ? "CodeBuddy 后台服务未运行。点击「启动 CodeBuddy（CDP 注入）」会自动拉起服务并以调试模式启动 CodeBuddy。"
-              : "WorkDaddy 未运行。请先安装并启动 WorkDaddy（其常驻服务提供 WorkBuddy 账号能力）。"
-            : /token/.test(error)
-              ? "未找到 WorkDaddy 本地凭证，请先安装并启动一次 WorkDaddy。"
-              : error}
+          {"后台服务未运行。请重启 Work Pet。"}
         </p>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="h-7 rounded-full px-3 text-xs" onClick={() => void load(true)}>

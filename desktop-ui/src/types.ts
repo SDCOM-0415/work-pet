@@ -41,7 +41,7 @@ export interface Entitlement {
   expire_sec: number;
 }
 
-// ---------------- WorkBuddy（WorkDaddy daemon 数据模型） ----------------
+// ---------------- WorkBuddy / CodeBuddy 数据模型 ----------------
 
 export interface WdCheckin {
   ok?: boolean;

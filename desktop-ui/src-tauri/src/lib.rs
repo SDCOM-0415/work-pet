@@ -1,5 +1,5 @@
 //! Work Pet · Tauri 桌面端
-//! 聚合 TraeWork 签到宠物（本地 daemon）与 WorkBuddy 账号面板（复用 WorkDaddy 本地 daemon）。
+//! Work Pet 桌面端：本地 daemon 提供三端签到、账号管理与备份能力。
 //! 前端：React + shadcn/ui（透明置顶窗口）；后端：双 daemon HTTP + 托盘 + 窗口几何。
 
 mod api;
@@ -31,8 +31,6 @@ async fn daemon_call(method: String, path: String, body: Option<String>) -> Resu
         .map_err(|e| format!("内部错误: {e}"))?
 }
 
-/// 转发一次 WorkDaddy daemon HTTP 请求（自动带本地 token）。
-/// port: 47832=WorkBuddy profile；47835=CodeBuddy profile。
 /// CodeBuddy 可执行文件定位（常见安装路径）。
 #[cfg(target_os = "windows")]
 fn resolve_codebuddy_exe() -> Option<PathBuf> {
@@ -258,7 +256,7 @@ fn is_autostart_enabled() -> Result<bool, String> {
     Ok(false)
 }
 
-/// 以 CDP 模式拉起 WorkBuddy（已运行则跳过）；二进制定位与 WorkDaddy 同口径。
+/// 以 CDP 模式拉起 WorkBuddy 客户端（已运行则跳过）。
 #[tauri::command]
 async fn launch_workbuddy(force: Option<bool>) -> Result<(), String> {
     #[cfg(target_os = "windows")]

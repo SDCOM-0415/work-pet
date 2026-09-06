@@ -272,10 +272,6 @@ export function fmtExpiry(ts: string | null | undefined): string {
   return `${ts.slice(0, 10)} ${ts.slice(11, 16)}`;
 }
 
-// ---------------- WorkBuddy（复用 WorkDaddy 本地 daemon，端口 47832） ----------------
-
-
-/// WorkDaddy 状态（公开接口，无需 token；用于可达性探测）
 // ---------------- WorkBuddy / CodeBuddy（WorkPet daemon 原生支持） ----------------
 
 export type ClientKind = "wb" | "cb";
