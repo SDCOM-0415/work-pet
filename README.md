@@ -142,6 +142,6 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
 
 ## 🧧 打赏支持
 
-如果 Work Pet 对你有帮助，欢迎请作者喝一杯：
+如果 Work Pet 对你有帮助，欢迎 Buy me token（为作者充点 token）：
 
 <p align="center"><img src="docs/images/buy-me-token.png" width="360" alt="Buy me token — Connor 的赞赏码"/></p>
