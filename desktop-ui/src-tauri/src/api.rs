@@ -205,7 +205,7 @@ fn spawn_daemon() -> Result<(), String> {
         .as_ref()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
     {
-        cmd.env("TRAEWORK_PET_DATA_DIR", &exe_dir);
+        cmd.env("WORKPET_DATA_DIR", &exe_dir);
     }
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());

@@ -550,5 +550,5 @@ pub fn run() {
             open_external
         ])
         .run(tauri::generate_context!())
-        .expect("error while running TraeWorkPet");
+        .expect("error while running WorkPet");
 }

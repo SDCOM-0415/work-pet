@@ -4,7 +4,7 @@
  * TraeWork 签到宠物 daemon
  *
  * 为 TraeWork（品牌名 TraeWork CN / TRAE Work，安装目录沿用旧名 "TRAE SOLO CN"）
- * 复刻 WorkDaddy 的 CDP 机制，只保留三个能力：
+ * 提供 CDP 注入与签到机制，只保留三个能力：
  *   1) 桌面宠物机器人   —— 注入到 TraeWork 窗口内的 SVG 动画宠物
  *   2) 每日签到         —— 调用官方 checkin_credits/status + claim 接口
  *   3) 签到过期显示     —— 距下次签到倒计时 + 本次/累计积分与到期信息
@@ -119,16 +119,11 @@ function getAuth() {
 // ---------------- 便携数据目录 ----------------
 // 账号备份/设置/积分缓存全部存放在数据目录（默认与 daemon.js 同目录）；
 // 由 pet.exe 拉起时通过环境变量指定为 exe 同目录，不写 C 盘 AppData。
-// exe 不可写时回退到 %APPDATA%\WorkPet；旧版 %APPDATA%\TraeWork-Pet 首次运行时自动迁移。
+// exe 不可写时回退到 %APPDATA%\WorkPet。
 let DATA_ROOT =
-  (process.env.TRAEWORK_PET_DATA_DIR && fs.existsSync(process.env.TRAEWORK_PET_DATA_DIR))
-    ? process.env.TRAEWORK_PET_DATA_DIR
+  (process.env.WORKPET_DATA_DIR && fs.existsSync(process.env.WORKPET_DATA_DIR))
+    ? process.env.WORKPET_DATA_DIR
     : __dirname;
-// 旧版数据目录（仅作迁移来源，只读）
-const LEGACY_DATA_DIR = path.join(
-  process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-  'TraeWork-Pet'
-);
 // 数据目录不可写（exe 被放在只读位置）时回退到 %APPDATA%\WorkPet
 const FALLBACK_DATA_DIR = path.join(
   process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
@@ -143,35 +138,9 @@ try {
   try { fs.mkdirSync(path.join(DATA_ROOT, 'accounts'), { recursive: true }); } catch (_) {}
 }
 
-function migrateLegacyFile(name) {
-  try {
-    const dst = path.join(DATA_ROOT, name);
-    const src = path.join(LEGACY_DATA_DIR, name);
-    if (fs.existsSync(dst) || !fs.existsSync(src)) return;
-    fs.copyFileSync(src, dst);
-    log('[data] 已迁移旧数据: ' + name);
-  } catch (_) {}
-}
-function migrateLegacyDir(name) {
-  try {
-    const dstDir = path.join(DATA_ROOT, name);
-    const srcDir = path.join(LEGACY_DATA_DIR, name);
-    fs.mkdirSync(dstDir, { recursive: true });
-    if (!fs.existsSync(srcDir)) return;
-    for (const f of fs.readdirSync(srcDir)) {
-      const dst = path.join(dstDir, f);
-      const src = path.join(srcDir, f);
-      if (!fs.existsSync(dst) && fs.statSync(src).isFile()) fs.copyFileSync(src, dst);
-    }
-  } catch (_) {}
-}
-migrateLegacyFile('config.json');
-migrateLegacyFile('credits.json');
-migrateLegacyDir('accounts');
-
 // ---------------- 多账号管理（备份/列表/切换/删除） ----------------
 // 登录态密文保存在 storage.json 的 iCubeAuthInfo://icube.cloudide 键里（自研 smart-secret AES）。
-// 每个账号按 <userId>.json 备份到 %APPDATA%\TraeWork-Pet\accounts 稳定目录，
+// 每个账号按 <userId>.json 备份到数据目录 accounts/ 下，
 // 备份里保存「原始密文字符串 + 展示字段」；切换时把密文原样写回 storage.json 即可（解密是纯函数）。
 const BACKUP_DIR = path.join(DATA_ROOT, 'accounts'); // 备份快照目录：WorkPet-accounts-<时间戳>.json
 // 单一账号库：三端所有账号都在这一个文件里（WorkPet 自有格式）
@@ -560,13 +529,31 @@ async function claimViaApp(timeoutMs = 150000) {
 
 // ---------------- 全账号单文件备份/恢复（WorkPet 自有格式，跨电脑迁移） ----------------
 // 导出为一个 WorkPet-accounts-<时间戳>.json，包含三端全部账号：
-//   traework  当前登录密文 + 全部账号备份（WorkPet accounts/*.json）
-//   workbuddy 当前登录文件 + 全部账号备份（WorkDaddy accounts/*.info）
-//   codebuddy 当前登录文件 + 全部账号备份（WorkDaddy profiles/codebuddy-cn/accounts/*.info）
-// 恢复时写回各自位置即可在新电脑上使用，不依赖 WorkDaddy 的备份功能。
-const WD_SHARED_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkDaddy');
-const WB_ACCOUNTS_DIR = path.join(WD_SHARED_DIR, 'accounts');
-const CB_ACCOUNTS_DIR = path.join(WD_SHARED_DIR, 'profiles', 'codebuddy-cn', 'accounts');
+//   traework  当前登录密文 + 全部账号备份（accounts/*.json）
+//   workbuddy 当前登录文件 + 全部账号备份（clients/accounts/*.info）
+//   codebuddy 当前登录文件 + 全部账号备份（clients/profiles/codebuddy-cn/accounts/*.info）
+// 恢复时写回各自位置即可在新电脑上使用。
+// WB/CB 账号备份目录：WorkPet 自有目录。旧版曾借用 WorkDaddy 目录存放，
+// 首次运行把旧目录文件搬迁过来（只读复制，旧目录原样保留）。
+const SHARED_DATA_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkPet', 'clients');
+const WB_ACCOUNTS_DIR = path.join(SHARED_DATA_DIR, 'accounts');
+const CB_ACCOUNTS_DIR = path.join(SHARED_DATA_DIR, 'profiles', 'codebuddy-cn', 'accounts');
+const LEGACY_SHARED_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkDaddy');
+function migrateLegacySharedDir(rel) {
+  try {
+    const dstDir = path.join(SHARED_DATA_DIR, rel);
+    const srcDir = path.join(LEGACY_SHARED_DIR, rel);
+    fs.mkdirSync(dstDir, { recursive: true });
+    if (!fs.existsSync(srcDir)) return;
+    for (const f of fs.readdirSync(srcDir)) {
+      const dst = path.join(dstDir, f);
+      const src = path.join(srcDir, f);
+      if (!fs.existsSync(dst) && fs.statSync(src).isFile()) fs.copyFileSync(src, dst);
+    }
+  } catch (_) {}
+}
+migrateLegacySharedDir('accounts');
+migrateLegacySharedDir(path.join('profiles', 'codebuddy-cn', 'accounts'));
 const EXT_AUTH_DIR = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CodeBuddyExtension', 'Data', 'Public', 'auth');
 const WB_AUTH_FILE = path.join(EXT_AUTH_DIR, 'workbuddy-desktop.info');
 const CB_AUTH_FILE = path.join(EXT_AUTH_DIR, 'Tencent-Cloud.coding-copilot.info');
@@ -676,7 +663,7 @@ async function restoreBackupData(data) {
       writeAuthSecret(data.traework.currentSecret);
     }
   }
-  // WorkBuddy：账号写回 WorkDaddy accounts；当前登录写回扩展 auth 文件
+  // WorkBuddy：账号写回 accounts；当前登录写回扩展 auth 文件
   if (data.workbuddy) {
     for (const a of data.workbuddy.accounts || []) {
       const uid = a && a.account && a.account.uid;
@@ -911,7 +898,7 @@ async function clientClaimDailyForAll(profileId) {
   return { total: st.total, done: st.done };
 }
 
-/** 积分查询（移植自 WorkDaddy credit-resource-queries + fetchResource） */
+/** 积分查询（credit-resource-queries + fetchResource） */
 function clientBuildResourceBody(now) {
   now = now || new Date();
   const end = new Date(now.getTime());
@@ -1790,7 +1777,7 @@ async function main() {
 
   server.on('error', (e) => {
     if (e && e.code === 'EADDRINUSE') {
-      log('[api] 端口 ' + UI_PORT + ' 已被占用，说明已有 TraeWork-Pet daemon 在运行，本实例退出。');
+      log('[api] 端口 ' + UI_PORT + ' 已被占用，说明已有 Work Pet daemon 在运行，本实例退出。');
       process.exit(0);
     }
     log('[api] 本地服务启动失败: ' + e.message);
