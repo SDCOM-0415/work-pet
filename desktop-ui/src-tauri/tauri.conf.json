@@ -42,6 +42,7 @@
     ],
     "resources": [
       "../../daemon.js",
+      "../../credit-segments.js",
       "binaries/node.exe"
     ]
   }

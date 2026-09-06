@@ -8,14 +8,34 @@ use std::time::Duration;
 
 pub const API_BASE: &str = "http://127.0.0.1:47921";
 
-/// 读取 WorkPet daemon 的本地 API token（daemon.js 同目录 .api-token）。
+/// 读取 WorkPet daemon 的本地 API token。
+/// 依次在 daemon.js 所在目录、exe 所在目录、%APPDATA%/WorkPet 尝试读取。
 /// daemon 首次启动时生成；读不到时返回 None（请求将收到 401，重试即可）。
 fn pet_token() -> Option<String> {
-    let daemon = find_daemon_js()?;
-    let file = daemon.parent()?.join(".api-token");
-    let t = std::fs::read_to_string(file).ok()?;
-    let t = t.trim().to_string();
-    if t.is_empty() { None } else { Some(t) }
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(daemon) = find_daemon_js() {
+        if let Some(p) = daemon.parent() {
+            candidates.push(p.join(".api-token"));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(p) = exe.parent() {
+            candidates.push(p.join(".api-token"));
+        }
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        candidates.push(Path::new(&appdata).join("WorkPet").join(".api-token"));
+    }
+
+    for path in candidates {
+        if let Ok(t) = std::fs::read_to_string(&path) {
+            let t = t.trim().to_string();
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(target_os = "windows")]
