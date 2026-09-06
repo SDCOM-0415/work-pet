@@ -6,6 +6,7 @@ import type {
   ClientStatus,
   Entitlement,
   Status,
+  UpdateInfo,
 } from "./types";
 
 // 服务端高峰限流等临时错误标记（后端注入），前端据此自动重试
@@ -341,4 +342,9 @@ export function clientDelete(kind: ClientKind, uid: string): Promise<void> {
 export function clientBackup(kind: ClientKind): Promise<void> {
   return call<any>("GET", `/api/client/${kind}/accounts?checkinStatus=1`).then(() => undefined);
 }
+
+export function checkUpdate(): Promise<UpdateInfo> {
+  return call<UpdateInfo>("GET", "/api/check-update");
+}
+
 

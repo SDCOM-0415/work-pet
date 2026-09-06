@@ -362,6 +362,33 @@ function postJson(url, body, headers) {
   });
 }
 
+function getJson(url, headers) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https:') ? require('https') : require('http');
+    const u = new URL(url);
+    const req = mod.request({
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + u.search,
+      method: 'GET',
+      headers: Object.assign({ Accept: 'application/json', 'User-Agent': 'WorkPet-Desktop' }, headers || {}),
+      timeout: 8000,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let obj = null;
+        try { obj = JSON.parse(text); } catch (_) {}
+        resolve({ status: res.statusCode, body: obj, text });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('请求超时')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function checkinHeaders(auth) {
   return {
     'Authorization': 'Cloud-IDE-JWT ' + auth.token,
@@ -1577,6 +1604,28 @@ const server = http.createServer(async (req, res) => {
       const s = saveSettings(patch);
       log('[config] 已保存设置: ' + JSON.stringify(patch));
       return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/check-update') {
+      try {
+        const gh = await getJson('https://api.github.com/repos/connoryang331/work-pet/releases/latest');
+        if (gh.status === 200 && gh.body) {
+          const latestTag = String(gh.body.tag_name || '').trim();
+          const currentTag = 'v1.0.0';
+          const hasUpdate = Boolean(latestTag && latestTag !== currentTag);
+          return sendJson(res, 200, {
+            ok: true,
+            hasUpdate,
+            currentVersion: currentTag,
+            latestVersion: latestTag || currentTag,
+            title: gh.body.name || latestTag,
+            url: gh.body.html_url || 'https://github.com/connoryang331/work-pet/releases/latest',
+            publishedAt: gh.body.published_at || '',
+          });
+        }
+        return sendJson(res, 200, { ok: true, hasUpdate: false, currentVersion: 'v1.0.0', error: 'GitHub API ' + gh.status });
+      } catch (err) {
+        return sendJson(res, 200, { ok: true, hasUpdate: false, currentVersion: 'v1.0.0', error: err.message });
+      }
     }
     return sendJson(res, 404, { ok: false, error: 'not found' });
   } catch (e) {

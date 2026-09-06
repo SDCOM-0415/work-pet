@@ -23,7 +23,7 @@ import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
 import traeworkIcon from "@/assets/traework.png";
 import workbuddyIcon from "@/assets/workbuddy.png";
 import codebuddyIcon from "@/assets/codebuddy.png";
-import type { Account, Entitlement, Status } from "@/types";
+import type { Account, Entitlement, Status, UpdateInfo } from "@/types";
 import { fmtCredits } from "@/api";
 import { cn } from "@/lib/utils";
 
@@ -50,6 +50,7 @@ interface PanelProps {
   onHidePetChange: (v: boolean) => void;
   deviceClaimDate: string;
   onHideToTray: () => void;
+  updateInfo?: UpdateInfo | null;
 }
 
 type Tab = "accounts" | "wb" | "cb" | "settings" | "about";
@@ -217,13 +218,16 @@ export default function Panel(p: PanelProps) {
               onClick={() => setTab(key)}
               title={label}
               className={cn(
-                "h-8 w-8 rounded-lg",
+                "relative h-8 w-8 rounded-lg",
                 tab === key
                   ? "bg-primary text-primary-foreground hover:bg-primary"
                   : "text-foreground/70 hover:bg-muted hover:text-foreground"
               )}
             >
               <Icon className="h-3.5 w-3.5" />
+              {key === "about" && p.updateInfo?.hasUpdate && (
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-background" />
+              )}
             </Button>
           ))}
         </div>
@@ -283,7 +287,7 @@ export default function Panel(p: PanelProps) {
           onRestored={p.onRefresh}
         />
       ) : (
-        <AboutTab />
+        <AboutTab updateInfo={p.updateInfo} />
       )}
     </Card>
   );
@@ -745,12 +749,44 @@ function SettingsTab({
 
 /* ---------------- 关于 Tab ---------------- */
 
-function AboutTab() {
+function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-center">
       <img src={robotIcon} alt="Work Pet" className="h-14 w-14" draggable={false} />
       <p className="text-sm font-semibold">Work Pet</p>
-      <p className="text-[11px] text-muted-foreground">版本 1.0.0</p>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-muted-foreground">当前版本 {updateInfo?.currentVersion || 'v1.0.0'}</span>
+        {updateInfo?.hasUpdate ? (
+          <Badge className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/30 text-[10px] px-1.5 py-0">
+            发现新版 {updateInfo.latestVersion}
+          </Badge>
+        ) : (
+          <span className="text-[10px] text-muted-foreground/60">(最新)</span>
+        )}
+      </div>
+
+      {updateInfo?.hasUpdate && (
+        <div className="mx-2 mt-1 flex flex-col items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-foreground/90">
+          <div className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            🎉 发现新版本 {updateInfo.latestVersion}
+          </div>
+          {updateInfo.title && (
+            <div className="text-[10px] text-muted-foreground line-clamp-1">
+              {updateInfo.title}
+            </div>
+          )}
+          <Button
+            size="sm"
+            className="mt-1 h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3"
+            onClick={() => {
+              invoke("open_external", { url: updateInfo.url || "https://github.com/connoryang331/work-pet/releases/latest" }).catch(() => {});
+            }}
+          >
+            前往下载更新
+          </Button>
+        </div>
+      )}
+
       <p className="max-w-full px-2 text-[11px] leading-4 text-foreground/80">
         Work Pet 是多 AI Agent 签到宠物：打开即自动为全部账号签到；
         多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。
@@ -772,3 +808,4 @@ function AboutTab() {
     </div>
   );
 }
+

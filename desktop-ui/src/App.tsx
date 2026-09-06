@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import Panel from "@/components/Panel";
 import PetRobot from "@/components/PetRobot";
-import type { Account, Entitlement, Status } from "@/types";
+import type { Account, Entitlement, Status, UpdateInfo } from "@/types";
 import {
   backupAccount,
   claimAllProgress,
@@ -19,6 +19,7 @@ import {
   getConfig,
   saveConfig,
   exportAllAccounts,
+  checkUpdate,
 } from "@/api";
 
 type Bootstrap = "booting" | "ready" | "failed";
@@ -49,6 +50,7 @@ export default function App() {
   const [claimResults, setClaimResults] = useState<
     Record<string, { ok: boolean; already: boolean; msg: string }>
   >({});
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   const readyRef = useRef(false);
   const didAutoBackup = useRef(false);
@@ -230,8 +232,18 @@ export default function App() {
       backupAccount()
         .then(() => refreshAll(false))
         .catch(() => {});
+
+      // 启动时静默检查一次 GitHub 更新
+      checkUpdate()
+        .then((info) => {
+          if (info && info.hasUpdate) {
+            setUpdateInfo(info);
+            showBubble(`🎉 发现新版本 ${info.latestVersion}，点击「关于」查看更新`, 5000);
+          }
+        })
+        .catch(() => {});
     }
-  }, [bootstrap, refreshAll]);
+  }, [bootstrap, refreshAll, showBubble]);
 
   // 自动全账号签到：每次启动只执行一次（daemon 端自带限流重试）；
   // 托盘「TraeWork 全部签到」与面板「全部签到」按钮复用同一入口。
@@ -421,6 +433,7 @@ export default function App() {
               setWindowVisible(false);
               setOpen(false);
             }}
+            updateInfo={updateInfo}
           />
         }
       </div>

@@ -76,3 +76,14 @@ export interface ClientStatus {
   batch?: { running?: boolean; total?: number; done?: number };
   cdp?: { connected?: boolean };
 }
+
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  title?: string;
+  url: string;
+  publishedAt?: string;
+  error?: string;
+}
+
