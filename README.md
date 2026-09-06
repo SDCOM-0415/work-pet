@@ -1,65 +1,94 @@
 # Work Pet 🤖
 
-**多 AI Agent 签到宠物** —— 一个常驻桌面的透明小宠物，自动为多个 AI 编程客户端完成每日签到、多账号管理与积分到期提醒。
+**语言：** 简体中文
 
-全部功能基于 **CDP（Chrome DevTools Protocol）注入**实现——后台无头服务经 CDP 连接各 AI 客户端，完成自动签到、多账号管理与积分到期提醒，无需打开客户端本体。以后还会接入更多 AI 端。
+> **Work Pet 是多 AI Agent 签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。账号与配置全部留在本机。**
+> 本机回环 CDP 注入 · 不改官方安装包 · 安装后无需 Node.js / Python 环境
 
-## ✨ 功能
+一个基于 **Chrome DevTools Protocol (CDP)** 的多 AI 编程客户端增强工具。
+零侵入、零重签名——后台服务无头运行，经 CDP 与各客户端交互，完成签到与账号管理。
 
-- **自动签到**：打开 Work Pet 即自动完成全部账号签到，无需打开客户端本体
-- **多账号管理**：每个客户端的所有账号集中管理，一键切换（自动重启客户端并登录）
-- **积分条**：按到期时间归类、长度与积分数量成正比，悬停查看到期日期与剩余天数
-- **设备签到感知**：对按"设备"限额的签到自动轮换账号、按天公平分配
-- **单文件备份/恢复**：三端全部账号打包为一个 `WorkPet-accounts-<时间戳>.json`，拷到其他电脑即可一键恢复
-- **桌面宠物**：3D 机器人形象（眨眼/天线呼吸/浮动动画），可隐藏到托盘
-- **主题**：深色/浅色一键切换，字号大小可调
+![License](https://img.shields.io/badge/license-AGPL--3.0-blueviolet)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
+![Node](https://img.shields.io/badge/node-bundled-green)
 
-## 🗂 目录结构
+---
+
+## 它能做什么
+
+- **自动签到**：打开 Work Pet 即对全部账号静默签到（每日缓存幂等），客户端本体无需运行。
+- **多账号管理**：每个客户端的账号集中展示，一键切换（自动以调试模式重启客户端并登录新账号）。
+- **积分条**：按到期时间归类、段长与积分数量成正比，悬停查看到期日期与剩余天数；最近一次到期醒目高亮。
+- **设备签到感知**：对按"设备"限额的签到自动轮换账号、按天公平分配，并在面板上一致呈现。
+- **单文件备份/恢复**：三端全部账号导出为一个 `WorkPet-accounts-<时间戳>.json`，拷到其他电脑一键恢复。
+- **桌面宠物**：3D 机器人形象（眨眼/天线呼吸/浮动动画），可缩到最小或隐藏到托盘，右键快捷菜单。
+- **深色/浅色主题**、字号大小调节、标签顺序自定义（拖拽并记住）。
+
+## 面板
+
+| 区域 | 能做什么 |
+| ---- | -------- |
+| **WorkBuddy / CodeBuddy / TraeWork** | 各端账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端 |
+| **设置** | 随系统启动、字体大小、显示完整手机号、隐藏桌面机器人、启动客户端开关、账号备份 / 恢复 |
+| **关于** | 版本与项目说明 |
+
+---
+
+## 安装
+
+1. 在 [Releases](../../releases)（或 Actions 构建产物）下载 `WorkPet_0.1.0_x64-setup.exe`
+2. 双击安装器完成安装
+3. 打开 `Work Pet`：首次使用请先在各 AI 客户端登录一次账号，Work Pet 会自动备份进账号库
+
+> 无需安装 Node.js / Python——运行时已随安装包捆绑。
+
+---
+
+## 原理
+
+**CDP 注入 · 不改官方安装包**
 
 ```
-WorkPet/
-├── WorkPet-accounts.json        # 唯一的账号库（三端所有账号，本地生成）
-├── accounts/
-│   └── WorkPet-accounts-<时间戳>.json   # 导出的备份快照（可拷到其他电脑）
-├── daemon.js                    # WorkPet 后台服务（签到/账号/备份 API）
-└── desktop-ui/                  # Tauri 2 + React 19 + shadcn/ui 桌面端
+┌──────────────┐  --remote-debugging-port=9222/9224  ┌──────────────────┐
+│ AI 客户端     │ <─────────────────────────────────> │     Work Pet     │
+│ (Electron)   │        Chrome DevTools Protocol      │   daemon.js      │
+│              │  ←── Runtime.evaluate / Page.reload ─│  HTTP :47921     │
+└──────────────┘                                      │  本地 API + 签到  │
+        TraeWork / WorkBuddy / CodeBuddy …（可持续增加） └──────────────────┘
 ```
 
-> 账号数据只保存在本地，`accounts/`、`WorkPet-accounts*.json`、`.api-token` 均已在 `.gitignore` 中排除，不会上传。
+1. **不修改客户端二进制**：以 `--remote-debugging-port` 参数拉起客户端，**二进制与签名原封不动**。
+2. **签到与积分直连官方接口**：读取各客户端的登录态文件（含 accessToken），直接调用签到与积分查询接口——客户端本体不需要运行。
+3. **账号自动备份**：监听登录态文件变化，每次登录/切换都把账号按 uid 备份进单文件账号库。
+4. **本地 HTTP API**：daemon 在 `127.0.0.1:47921` 起服务（带本地 token 鉴权），面板通过它读写账号、触发签到。
+5. **数据边界清晰**：账号备份和本地配置保存在本机；仅按功能访问各 AI 客户端的官方 API（签到、积分）。
 
-## 🔧 构建
+> 为什么用 CDP 而不是官方插件机制：直接面向运行中的应用实例，事件级感知登录变化，
+> 官方升级客户端后只要界面没大改就照常工作。
 
-前置：Node.js 20+、Rust（stable）、WebView2（Windows 10/11 自带）
+---
 
-```bash
-npm install
-npx tauri build        # 产物在 desktop-ui/src-tauri/target/release/
-```
+## 账号迁移到其他电脑
 
-开发调试：
+1. 在 Work Pet 设置页点击「导出全部账号」，生成 `WorkPet-accounts-<时间戳>.json`（安装根目录）。
+2. 用安全方式把文件传到新电脑，安装并启动 Work Pet。
+3. 设置 → 「从 JSON 文件恢复…」选择该文件，账号立即导入。
 
-```bash
-npm run dev
-```
+> ⚠️ 导出文件包含可恢复登录状态的 token，**请像保护密码一样安全保存和传输**，
+> 迁移完成后及时删除不再需要的副本。
 
-## 📦 备份与恢复
+---
 
-- **导出**：点击面板右上角 💾，在安装根目录生成 `WorkPet-accounts-<时间戳>.json`
-- **恢复**：设置 → 账号备份/恢复 → 「从 JSON 文件恢复…」，选择备份文件即可
-- 适合换机迁移：把 JSON 拷到新电脑，装好 Work Pet 后选择文件恢复，无需重新登录
+## 安全与隐私
 
-## 📦 自包含安装
+- **本地数据优先**：账号备份、配置不会在后台上传；签到与积分功能会访问各 AI 客户端的官方 API。
+- 本地 API 带 token 鉴权，浏览器网页无法跨域调用。
 
-WorkBuddy / CodeBuddy 端的引擎已**内置**（`desktop-ui/src-tauri/vendor/wd/`），安装包自带全部依赖，
-用户无需安装任何第三方程序——安装后打开 Work Pet 即可使用全部功能。
+---
 
-## ⚠️ 免责声明
+## 许可与声明
 
-本项目为个人效率工具，与 Trae / WorkBuddy / CodeBuddy 官方无关。签到接口参数来自公开客户端行为分析，仅供学习交流，请勿用于商业用途。使用本项目产生的任何后果由使用者自行承担。
+本项目采用 **[GNU Affero General Public License v3.0](LICENSE)** 开源（`SPDX-License-Identifier: AGPL-3.0-or-later`）。
 
-## 📄 License
-
-[AGPL-3.0](./LICENSE)
-
-WorkBuddy/CodeBuddy 端的签到、积分解析与注入架构移植自 [WorkDaddy](https://github.com/babygoton/WorkDaddy)（AGPL-3.0），
-因此本项目同样以 AGPL-3.0 发布：任何修改（包括仅作为网络服务运行）都必须开源。
+- WorkBuddy / CodeBuddy 端的签到、积分解析与注入架构移植自 [WorkDaddy](https://github.com/babygoton/WorkDaddy)（AGPL-3.0），因此本项目同样以 AGPL-3.0 发布：任何修改（包括仅作为网络服务运行）都必须开源。
+- 本项目仅面向本机运行的 AI 桌面客户端做体验增强，**与各客户端官方无隶属关系**；相关名称与商标归其权利人所有，本项目未获得官方授权或认可。
