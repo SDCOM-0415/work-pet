@@ -436,7 +436,7 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wdLaunchOnStart: false, cbLaunchOnStart: false, showPhone: false, fontScale: 1 };
+const SETTING_DEFAULTS = { launchHostOnStart: false, wdLaunchOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, showPhone: false, fontScale: 1 };
 function loadSettings() {
   try {
     return Object.assign({}, SETTING_DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
@@ -709,7 +709,7 @@ async function restoreBackupData(data) {
 // 账号库 = WorkPet-accounts.json 的 workbuddy/codebuddy 段；
 // 签到/积分 = 各端 apiHost 的 HTTP 接口（Bearer accessToken）。
 
-const { extractCreditSegments, sortCreditSegments } = require('./credit-segments.js');
+const { extractCreditSegments, sortCreditSegments, mergeCreditSegments } = require('./credit-segments.js');
 
 const CLIENT_PROFILES = {
   wb: {
@@ -956,15 +956,18 @@ async function clientFetchCredits(profileId, accessToken) {
       if (accounts.length === 0 && attempt < 3) { await sleep(300 * attempt); continue; }
       let credits = 0;
       for (const a of accounts) {
+        // 剩余字段优先「周期剩余」(CycleCapacityRemainPrecise)：月度包用完时 CapacityRemainPrecise
+        // 仍是满额，必须用周期剩余才算对。所有包组的剩余求和 = 总积分。
         const cands = [a.CycleCapacityRemainPrecise, a.CycleCapacityRemain, a.CapacityRemainPrecise, a.CapacityRemain];
+        let v = NaN;
         for (const c of cands) {
           if (c === undefined || c === null || c === '') continue;
-          const v = Number(c);
-          if (Number.isFinite(v)) { credits = v; break; }
+          const n = parseFloat(c);
+          if (!Number.isNaN(n)) { v = n; break; }
         }
-        if (credits > 0) break;
+        if (!Number.isNaN(v)) credits += v;
       }
-      let segments = sortCreditSegments(extractCreditSegments(accounts, '积分'));
+      let segments = sortCreditSegments(mergeCreditSegments(extractCreditSegments(accounts, '积分')));
       const visible = segments.reduce((sum, x) => sum + x.remaining, 0);
       if (credits > visible + 0.01) {
         segments = sortCreditSegments([
@@ -972,7 +975,7 @@ async function clientFetchCredits(profileId, accessToken) {
           { remaining: credits - visible, total: credits - visible, expiresAt: null, source: '其他积分' },
         ]);
       }
-      return { credits: credits, count: accounts.length, totalDosage: 0, segments: segments };
+      return { credits: parseFloat(credits.toFixed(2)), count: accounts.length, totalDosage: 0, segments: segments };
     } catch (e) {
       lastErr = e;
       if (attempt < 3) await sleep(300 * attempt);
@@ -1566,13 +1569,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       const s = loadSettings();
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wdLaunchOnStart: !!s.wdLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'accounts', 'cb'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wdLaunchOnStart: !!(s.wbLaunchOnStart ?? s.wdLaunchOnStart), wbLaunchOnStart: !!(s.wbLaunchOnStart ?? s.wdLaunchOnStart), showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'accounts', 'cb'] });
     }
     if (req.method === 'POST' && url.pathname === '/api/config') {
       const body = await readBody(req);
       const patch = {};
       if (typeof body.launchHostOnStart === 'boolean') patch.launchHostOnStart = body.launchHostOnStart;
       if (typeof body.wdLaunchOnStart === 'boolean') patch.wdLaunchOnStart = body.wdLaunchOnStart;
+      if (typeof body.wbLaunchOnStart === 'boolean') patch.wbLaunchOnStart = body.wbLaunchOnStart;
       if (typeof body.showPhone === 'boolean') patch.showPhone = body.showPhone;
       if (typeof body.fontScale === 'number' && body.fontScale >= 0.8 && body.fontScale <= 1.5) patch.fontScale = body.fontScale;
       if (typeof body.cbLaunchOnStart === 'boolean') patch.cbLaunchOnStart = body.cbLaunchOnStart;
@@ -1584,7 +1588,7 @@ const server = http.createServer(async (req, res) => {
       }
       const s = saveSettings(patch);
       log('[config] 已保存设置: ' + JSON.stringify(patch));
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wdLaunchOnStart: !!s.wdLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'accounts', 'cb'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wdLaunchOnStart: !!(s.wbLaunchOnStart ?? s.wdLaunchOnStart), wbLaunchOnStart: !!(s.wbLaunchOnStart ?? s.wdLaunchOnStart), showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'accounts', 'cb'] });
     }
     return sendJson(res, 404, { ok: false, error: 'not found' });
   } catch (e) {

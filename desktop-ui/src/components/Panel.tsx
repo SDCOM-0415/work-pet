@@ -596,7 +596,7 @@ function SettingsTab({
     if (wdLaunch === null) return;
     const next = !wdLaunch;
     setWdLaunch(next);
-    saveConfig({ wdLaunchOnStart: next }).catch(() => setWdLaunch(!next));
+    saveConfig({ wbLaunchOnStart: next }).catch(() => setWdLaunch(!next));
   };
 
   const toggleAutoStart = () => {

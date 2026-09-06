@@ -184,7 +184,7 @@ export interface PetConfig {
   /// 打开 Pet 时是否同时启动 TraeWork（默认 false；签到不需要 TraeWork 运行）
   launchHostOnStart: boolean;
   /// 打开 Pet 时是否同时启动 WorkBuddy（默认 false）
-  wdLaunchOnStart: boolean;
+  wbLaunchOnStart: boolean;
   /// 是否显示手机号（默认隐藏；TraeWork 源数据只有打码号）
   showPhone: boolean;
   /// 字体缩放（0.9 小 / 1 标准 / 1.15 大）
@@ -200,7 +200,7 @@ export interface PetConfig {
 export function getConfig(): Promise<PetConfig> {
   return call<any>("GET", "/api/config").then((v) => ({
     launchHostOnStart: Boolean(v?.launchHostOnStart),
-    wdLaunchOnStart: Boolean(v?.wdLaunchOnStart),
+    wbLaunchOnStart: Boolean(v?.wbLaunchOnStart ?? v?.wdLaunchOnStart),
     showPhone: Boolean(v?.showPhone),
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
@@ -212,7 +212,7 @@ export function getConfig(): Promise<PetConfig> {
 export function saveConfig(patch: Partial<PetConfig>): Promise<PetConfig> {
   return call<any>("POST", "/api/config", patch).then((v) => ({
     launchHostOnStart: Boolean(v?.launchHostOnStart),
-    wdLaunchOnStart: Boolean(v?.wdLaunchOnStart),
+    wbLaunchOnStart: Boolean(v?.wbLaunchOnStart ?? v?.wdLaunchOnStart),
     showPhone: Boolean(v?.showPhone),
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
