@@ -200,7 +200,7 @@ export interface PetConfig {
 export function getConfig(): Promise<PetConfig> {
   return call<any>("GET", "/api/config").then((v) => ({
     launchHostOnStart: Boolean(v?.launchHostOnStart),
-    wbLaunchOnStart: Boolean(v?.wbLaunchOnStart ?? v?.wdLaunchOnStart),
+    wbLaunchOnStart: Boolean(v?.wbLaunchOnStart),
     showPhone: Boolean(v?.showPhone),
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
@@ -212,7 +212,7 @@ export function getConfig(): Promise<PetConfig> {
 export function saveConfig(patch: Partial<PetConfig>): Promise<PetConfig> {
   return call<any>("POST", "/api/config", patch).then((v) => ({
     launchHostOnStart: Boolean(v?.launchHostOnStart),
-    wbLaunchOnStart: Boolean(v?.wbLaunchOnStart ?? v?.wdLaunchOnStart),
+    wbLaunchOnStart: Boolean(v?.wbLaunchOnStart),
     showPhone: Boolean(v?.showPhone),
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
