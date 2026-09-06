@@ -14,6 +14,25 @@
 
 ---
 
+## 演示
+
+**账号列表与积分条**（WorkBuddy）
+![WorkBuddy 账号列表](docs/images/workbuddy.png)
+
+**积分明细展开**（到期时间排序，最近过期高亮）
+![积分明细](docs/images/workbuddy-detail.png)
+
+**CodeBuddy**
+![CodeBuddy](docs/images/codebuddy.png)
+
+**TraeWork**（绿色积分条）
+![TraeWork](docs/images/traework.png)
+
+**设置**
+![设置](docs/images/settings.png)
+
+---
+
 ## 它能做什么
 
 - **自动签到**：打开 Work Pet 即对全部账号静默签到（每日缓存幂等），客户端本体无需运行。
