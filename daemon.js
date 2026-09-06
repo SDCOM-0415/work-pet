@@ -1627,6 +1627,14 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, hasUpdate: false, currentVersion: 'v1.0.0', error: err.message });
       }
     }
+    if (req.method === 'POST' && url.pathname === '/api/shutdown') {
+      sendJson(res, 200, { ok: true, message: 'shutting down' });
+      setTimeout(() => {
+        log('[daemon] 收到退出请求，正在终止 daemon 进程');
+        process.exit(0);
+      }, 300);
+      return;
+    }
     return sendJson(res, 404, { ok: false, error: 'not found' });
   } catch (e) {
     log('[api] error ' + url.pathname + ': ' + e.message);

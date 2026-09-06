@@ -262,3 +262,9 @@ pub fn ensure_daemon() -> Result<(), String> {
     }
     Err("后台服务启动超时，请确认已安装 Node.js".to_string())
 }
+
+/// 发送请求终止本地常驻 daemon（避免安装更新时 node.exe 被锁定）
+pub fn stop_daemon() {
+    let _ = do_request("POST", "/api/shutdown", None);
+}
+

@@ -241,9 +241,10 @@ fn start_window_drag(window: Window) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-/// 退出应用（托盘菜单）：先隐藏托盘图标再退出，避免任务栏残留。
+/// 退出应用（托盘菜单）：先终止后台 daemon，隐藏托盘图标再退出，避免任务栏残留或进程独占。
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    api::stop_daemon();
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_visible(false);
     }
