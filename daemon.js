@@ -732,6 +732,9 @@ const clientCheckinState = {
   wb: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
   cb: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
 };
+// WB/CB 账号体系互通：同一账号在两端并发签到会被服务端以「请求处理中」拒绝，
+// 因此签到全局串行（一次只跑一个 profile 的签到轮）
+let clientClaimGlobalLock = false;
 
 function clientLoadCheckinCache(profileId) {
   try {
@@ -870,10 +873,11 @@ async function clientDailyCheckin(profileId, accessToken) {
 
 async function clientClaimDailyForAll(profileId) {
   const st = clientCheckinState[profileId];
-  if (st.inFlight) return { skipped: true, reason: 'in-flight' };
+  if (st.inFlight || clientClaimGlobalLock) return { skipped: true, reason: 'in-flight' };
   const accounts = clientListAccounts(profileId).accounts;
   if (!accounts.length) return { skipped: true, reason: 'no-accounts' };
   st.inFlight = true;
+  clientClaimGlobalLock = true;
   st.running = true;
   st.total = accounts.length;
   st.done = 0;
@@ -896,11 +900,13 @@ async function clientClaimDailyForAll(profileId) {
       clientSaveCheckinCache(profileId, cache);
       st.done++;
       log('[client:' + profileId + '] ' + a.nickname + ' 签到: ' + (rec.ok ? (rec.already ? '已签' : '成功') : rec.message));
+      await sleep(500);
     }
   } finally {
     st.inFlight = false;
     st.running = false;
     st.finishedAt = Date.now();
+    clientClaimGlobalLock = false;
   }
   return { total: st.total, done: st.done };
 }

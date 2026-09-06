@@ -159,15 +159,15 @@ fn find_node() -> String {
         if let Some(dir) = exe.parent() {
             v.push(dir.join("node.exe"));
             v.push(dir.join("binaries").join("node.exe"));
-        }
-        // 开发环境：从 src-tauri 向上找 binaries/node.exe
-        let mut d = dir.to_path_buf();
-        for _ in 0..5 {
-            v.push(d.join("binaries").join("node.exe"));
-            d = match d.parent() {
-                Some(p) => p.to_path_buf(),
-                None => break,
-            };
+            // 开发环境：从 exe 目录向上找 binaries/node.exe
+            let mut d = dir.to_path_buf();
+            for _ in 0..5 {
+                v.push(d.join("binaries").join("node.exe"));
+                d = match d.parent() {
+                    Some(p) => p.to_path_buf(),
+                    None => break,
+                };
+            }
         }
     }
     if let Ok(pf) = std::env::var("ProgramFiles") {
