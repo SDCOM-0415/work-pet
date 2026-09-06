@@ -41,7 +41,8 @@
       "icons/128x128.png"
     ],
     "resources": [
-      "../../daemon.js"
+      "../../daemon.js",
+      "binaries/node.exe"
     ]
   }
 }

@@ -826,6 +826,8 @@ function clientTokenFor(profileId, uid) {
 async function clientDailyCheckin(profileId, accessToken) {
   const profile = CLIENT_PROFILES[profileId];
   let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+  if (attempt > 0) await sleep(2000);
   for (const host of profile.checkinHosts) {
     for (const cpath of ['/billing/meter/daily-checkin', '/v2/billing/meter/daily-checkin']) {
       try {
@@ -853,12 +855,15 @@ async function clientDailyCheckin(profileId, accessToken) {
           return { ok: true, already, deviceLimit, code, message: o.msg || o.message || 'ok' };
         }
         if (r.status === 401) return { ok: false, code, message: '登录身份过期' };
+        const busy = /请求处理中|重复操作|请稍后再试/.test(o.msg || o.message || '');
+        if (busy) { lastErr = o.msg || o.message; break; }
         if (r.status >= 400 && r.status !== 404) return { ok: false, code, message: 'HTTP ' + r.status };
         lastErr = o.msg || o.message || ('HTTP ' + r.status);
       } catch (e) {
         lastErr = e.message;
       }
     }
+  }
   }
   return { ok: false, message: lastErr || '签到失败' };
 }
@@ -1080,10 +1085,12 @@ async function rotateAllAccounts({ claim }) {
           markDeviceClaimedToday();
           item.ok = true; item.msg = '签到成功';
         } else if (isDeviceClaimedToday()) {
-          // 今日设备名额已被其他账号占用，不再拉起 TraeWork（避免无意义启动）
-          item.ok = false;
+          // 今日设备名额已被其他账号占用：设备已完成签到，不再拉起 TraeWork，
+          // 状态按"已签"处理（Trae 按设备计算签到，名额被领 = 本设备今日已签）
+          item.ok = true;
+          item.already = true;
           item.msg = '本设备已有其他账号签到';
-          log(`[claim_all] ${item.nickname} 跳过宿主 IPC 签到：设备今日名额已用`);
+          log(`[claim_all] ${item.nickname} 跳过宿主 IPC 签到：设备今日名额已用（按已签计）`);
         } else if (r && r.retryable) {
           log(`[claim_all] ${item.nickname} HTTP 签到被服务端拒绝，改走宿主 IPC 签到（自动拉起/关闭 TraeWork）`);
           const viaApp = await claimViaApp();

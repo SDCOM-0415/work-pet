@@ -154,6 +154,22 @@ fn find_daemon_js() -> Option<std::path::PathBuf> {
 /// 在常见安装位置定位 node.exe。
 fn find_node() -> String {
     let mut v: Vec<std::path::PathBuf> = Vec::new();
+    // 优先使用随安装包捆绑的 node 运行时（用户无需自行安装 Node.js）
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            v.push(dir.join("node.exe"));
+            v.push(dir.join("binaries").join("node.exe"));
+        }
+        // 开发环境：从 src-tauri 向上找 binaries/node.exe
+        let mut d = dir.to_path_buf();
+        for _ in 0..5 {
+            v.push(d.join("binaries").join("node.exe"));
+            d = match d.parent() {
+                Some(p) => p.to_path_buf(),
+                None => break,
+            };
+        }
+    }
     if let Ok(pf) = std::env::var("ProgramFiles") {
         v.push(Path::new(&pf).join("nodejs").join("node.exe"));
     }

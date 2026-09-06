@@ -1,0 +1,3 @@
+
+# ===== 打包时复制进来的 node 运行时（不进 git，CI 从 setup-node 复制）=====
+binaries/node.exe
