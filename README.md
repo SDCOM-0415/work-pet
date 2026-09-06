@@ -16,20 +16,18 @@
 
 ## 演示
 
-**账号列表与积分条**（WorkBuddy）
-![WorkBuddy 账号列表](docs/images/workbuddy.png)
-
-**积分明细展开**（到期时间排序，最近过期高亮）
-![积分明细](docs/images/workbuddy-detail.png)
-
-**CodeBuddy**
-![CodeBuddy](docs/images/codebuddy.png)
-
-**TraeWork**（绿色积分条）
-![TraeWork](docs/images/traework.png)
-
-**设置**
-![设置](docs/images/settings.png)
+<table>
+  <tr>
+    <td align="center"><strong>账号列表与积分条</strong>（WorkBuddy）<br><img src="docs/images/workbuddy.png" width="240" alt="WorkBuddy 账号列表与积分条"/></td>
+    <td align="center"><strong>积分明细展开</strong><br><img src="docs/images/workbuddy-detail.png" width="240" alt="积分明细展开，到期时间排序，最近过期高亮"/></td>
+    <td align="center"><strong>CodeBuddy</strong><br><img src="docs/images/codebuddy.png" width="240" alt="CodeBuddy"/></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>TraeWork</strong>（绿色积分条）<br><img src="docs/images/traework.png" width="240" alt="TraeWork，绿色积分条"/></td>
+    <td align="center"><strong>设置</strong><br><img src="docs/images/settings.png" width="240" alt="设置"/></td>
+    <td align="center"><strong>关于</strong><br><img src="docs/images/about.png" width="240" alt="关于页，版本与项目信息"/></td>
+  </tr>
+</table>
 
 ---
 
@@ -139,3 +137,11 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
 
 - WorkBuddy / CodeBuddy 端的签到、积分解析与注入架构移植自 [WorkDaddy](https://github.com/babygoton/WorkDaddy)（AGPL-3.0），因此本项目同样以 AGPL-3.0 发布：任何修改（包括仅作为网络服务运行）都必须开源。
 - 本项目仅面向本机运行的 AI 桌面客户端做体验增强，**与各客户端官方无隶属关系**；相关名称与商标归其权利人所有，本项目未获得官方授权或认可。
+
+---
+
+## 🧧 打赏支持
+
+如果 Work Pet 对你有帮助，欢迎请作者喝一杯：
+
+<p align="center"><img src="docs/images/buy-me-token.png" width="360" alt="Buy me token — Connor 的赞赏码"/></p>
