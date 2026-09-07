@@ -19,6 +19,22 @@ jobs:
         with:
           node-version: 24
 
+      - name: Prepare bundled runtime and JS resources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "desktop-ui/src-tauri/binaries" | Out-Null
+          Copy-Item "daemon.js" "desktop-ui/src-tauri/daemon.js" -Force
+          Copy-Item "credit-segments.js" "desktop-ui/src-tauri/credit-segments.js" -Force
+
+          $node = (Get-Command node.exe).Source
+          Copy-Item $node "desktop-ui/src-tauri/binaries/node.exe" -Force
+
+          Write-Host "=== Bundled resources ==="
+          Get-Item "desktop-ui/src-tauri/daemon.js"
+          Get-Item "desktop-ui/src-tauri/credit-segments.js"
+          Get-Item "desktop-ui/src-tauri/binaries/node.exe"
+          & "desktop-ui/src-tauri/binaries/node.exe" --version
+
       - name: Install frontend deps
         working-directory: desktop-ui
         run: npm ci
@@ -46,7 +62,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WorkPet-windows-x64
-          path: desktop-ui/src-tauri/bin/release/bundle/nsis/
+          path: desktop-ui/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
           retention-days: 7
 
   build-macos:
@@ -60,12 +77,49 @@ jobs:
         with:
           node-version: 24
 
-      - name: Prepare JS resources (copy from repo root)
+      - name: Prepare Universal Node runtime and JS resources
+        shell: bash
         run: |
-          ROOT="$(git -C "$(pwd)" rev-parse --show-toplevel)"
-          cp "$ROOT/daemon.js"          desktop-ui/src-tauri/daemon.js
-          cp "$ROOT/credit-segments.js" desktop-ui/src-tauri/credit-segments.js
-          ls -la desktop-ui/src-tauri/{daemon,credit-segments}.js
+          set -euo pipefail
+
+          ROOT="$GITHUB_WORKSPACE"
+          TAURI_DIR="$ROOT/desktop-ui/src-tauri"
+          BIN_DIR="$TAURI_DIR/binaries"
+          mkdir -p "$BIN_DIR"
+
+          cp "$ROOT/daemon.js" "$TAURI_DIR/daemon.js"
+          cp "$ROOT/credit-segments.js" "$TAURI_DIR/credit-segments.js"
+
+          NODE_VERSION="$(node -p 'process.version')"
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+
+          echo "Preparing Node ${NODE_VERSION} as a Universal 2 runtime"
+          curl --fail --location --retry 3 \
+            "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-darwin-x64.tar.gz" \
+            -o "$TMP_DIR/node-x64.tar.gz"
+          curl --fail --location --retry 3 \
+            "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-darwin-arm64.tar.gz" \
+            -o "$TMP_DIR/node-arm64.tar.gz"
+
+          tar -xzf "$TMP_DIR/node-x64.tar.gz" -C "$TMP_DIR"
+          tar -xzf "$TMP_DIR/node-arm64.tar.gz" -C "$TMP_DIR"
+
+          X64_NODE="$TMP_DIR/node-${NODE_VERSION}-darwin-x64/bin/node"
+          ARM64_NODE="$TMP_DIR/node-${NODE_VERSION}-darwin-arm64/bin/node"
+
+          lipo -create "$X64_NODE" "$ARM64_NODE" -output "$BIN_DIR/node"
+          chmod +x "$BIN_DIR/node"
+
+          # lipo invalidates the original per-architecture signatures.
+          # An ad-hoc signature is sufficient for unsigned CI artifacts.
+          codesign --force --sign - "$BIN_DIR/node"
+
+          echo "=== Bundled resources ==="
+          ls -lh "$TAURI_DIR/daemon.js" "$TAURI_DIR/credit-segments.js" "$BIN_DIR/node"
+          file "$BIN_DIR/node"
+          lipo -info "$BIN_DIR/node"
+          "$BIN_DIR/node" --version
 
       - name: Install frontend deps
         working-directory: desktop-ui
@@ -90,15 +144,30 @@ jobs:
         working-directory: desktop-ui
         run: npx tauri build --target universal-apple-darwin
 
-      - name: Verify universal binary
+      - name: Verify Universal app and bundled Node
         working-directory: desktop-ui
+        shell: bash
         run: |
+          set -euo pipefail
           APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/WorkPet.app"
           BIN="$APP/Contents/MacOS/work-pet"
+          NODE="$APP/Contents/Resources/binaries/node"
 
-          echo "=== Universal binary ==="
+          echo "=== WorkPet executable ==="
           file "$BIN"
           lipo -info "$BIN"
+
+          echo "=== Bundled Node ==="
+          test -x "$NODE"
+          file "$NODE"
+          lipo -info "$NODE"
+          "$NODE" --version
+
+          echo "=== JS resources ==="
+          test -f "$APP/Contents/Resources/daemon.js"
+          test -f "$APP/Contents/Resources/credit-segments.js"
+          ls -lh "$APP/Contents/Resources/daemon.js" \
+                 "$APP/Contents/Resources/credit-segments.js"
 
           echo "=== DMG ==="
           ls -lh src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
@@ -108,4 +177,5 @@ jobs:
         with:
           name: WorkPet-macos-universal
           path: desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
           retention-days: 7

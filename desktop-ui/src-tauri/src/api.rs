@@ -159,6 +159,8 @@ fn find_daemon_js() -> Option<std::path::PathBuf> {
         exe_dir.join("daemon.js"),
         exe_dir.join("_up_").join("_up_").join("daemon.js"),
         exe_dir.join("resources").join("daemon.js"),
+        // macOS .app bundle: Contents/MacOS/work-pet -> Contents/Resources/daemon.js
+        exe_dir.join("..").join("Resources").join("daemon.js"),
     ];
     for c in &candidates {
         if c.is_file() {
@@ -187,6 +189,17 @@ fn find_node() -> String {
             v.push(dir.join("binaries").join("node"));
             v.push(dir.join("node.exe"));
             v.push(dir.join("binaries").join("node.exe"));
+
+            // macOS .app：Tauri resources 位于 Contents/Resources。
+            // 主程序位于 Contents/MacOS/work-pet，因此需要显式检查相邻 Resources 目录。
+            if cfg!(target_os = "macos") {
+                if let Some(contents_dir) = dir.parent() {
+                    let resources = contents_dir.join("Resources");
+                    v.push(resources.join("binaries").join("node"));
+                    v.push(resources.join("node"));
+                }
+            }
+
             // 开发环境：从 exe 目录向上找 binaries/node
             let mut d = dir.to_path_buf();
             for _ in 0..5 {

@@ -17,6 +17,7 @@ desktop-ui/src-tauri/binaries/
 .DS_Store
 Thumbs.db
 desktop-ui/.vite/
+.kagent/
 
 # ===== 调试/临时文件 =====
 *.bak
