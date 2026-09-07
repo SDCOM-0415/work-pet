@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Install frontend deps
         working-directory: desktop-ui
@@ -58,7 +58,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Prepare JS resources (copy from repo root)
         run: |
@@ -71,7 +71,7 @@ jobs:
         working-directory: desktop-ui
         run: npm ci
 
-      - name: Install Rust stable (both targets + universal)
+      - name: Install Rust stable (both macOS targets)
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -88,18 +88,24 @@ jobs:
 
       - name: Build universal macOS app
         working-directory: desktop-ui
-        run: npx tauri build -- --target universal-apple-darwin
+        run: npx tauri build --target universal-apple-darwin
 
       - name: Verify universal binary
+        working-directory: desktop-ui
         run: |
           APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/WorkPet.app"
-          file "$APP/Contents/MacOS/work-pet"
+          BIN="$APP/Contents/MacOS/work-pet"
+
+          echo "=== Universal binary ==="
+          file "$BIN"
+          lipo -info "$BIN"
+
           echo "=== DMG ==="
-          ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/
+          ls -lh src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
       - name: Upload macOS universal DMG
         uses: actions/upload-artifact@v4
         with:
           name: WorkPet-macos-universal
-          path: desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/
+          path: desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           retention-days: 7
