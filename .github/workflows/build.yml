@@ -52,10 +52,6 @@ jobs:
   build-macos:
     name: Build (macOS universal)
     runs-on: macos-latest
-    strategy:
-      matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
-      fail-fast: false
     steps:
       - uses: actions/checkout@v4
 
@@ -64,18 +60,19 @@ jobs:
         with:
           node-version: 20
 
-      - name: Bundle platform node binary
+      - name: Prepare JS resources (copy, not symlink)
         run: |
-          mkdir -p desktop-ui/src-tauri/binaries
-          cp "$(command -v node)" desktop-ui/src-tauri/binaries/node
-          chmod +x desktop-ui/src-tauri/binaries/node
-          echo "Bundled: $(file desktop-ui/src-tauri/binaries/node)"
+          cp "$(git -C "$(pwd)" rev-parse --show-toplevel)/daemon.js" \
+             desktop-ui/src-tauri/daemon.js
+          cp "$(git -C "$(pwd)" rev-parse --show-toplevel)/credit-segments.js" \
+             desktop-ui/src-tauri/credit-segments.js
+          ls -la desktop-ui/src-tauri/daemon.js desktop-ui/src-tauri/credit-segments.js
 
       - name: Install frontend deps
         working-directory: desktop-ui
         run: npm ci
 
-      - name: Install Rust stable
+      - name: Install Rust stable (both targets)
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -90,83 +87,69 @@ jobs:
             desktop-ui/src-tauri/target/
           key: ${{ runner.os }}-macos-universal-cargo-${{ hashFiles('desktop-ui/src-tauri/Cargo.lock') }}
 
-      - name: Build Tauri app (${{ matrix.target }})
+      # Build x86_64 first (sets the node binary in src-tauri/binaries/)
+      - name: Build Tauri app (x86_64)
         working-directory: desktop-ui
-        run: npx tauri build --target ${{ matrix.target }}
+        run: npx tauri build --target x86_64-apple-darwin
 
-      - name: Archive ${{ matrix.target }} .app
+      # Build arm64 — this overwrites binaries/node with arm64 version
+      # We save the x86_64 binary before this
+      - name: Save x86_64 app bundle
         run: |
-          cp -R src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app \
-              src-tauri/target/universal-${{ matrix.target }}.app
+          cp -R src-tauri/target/x86_64-apple-darwin/release/bundle/macos/WorkPet.app \
+                src-tauri/target/release/WorkPet-x86_64.app
+          cp -R src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/ \
+                src-tauri/target/release/dmg-x86_64/
+
+      - name: Build Tauri app (aarch64)
         working-directory: desktop-ui
+        run: npx tauri build --target aarch64-apple-darwin
 
-      - name: Upload ${{ matrix.target }} artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-${{ matrix.target }}
-          path: desktop-ui/src-tauri/target/universal-${{ matrix.target }}.app
-          retention-days: 7
-
-  merge-universal:
-    name: Merge → Universal macOS
-    runs-on: macos-latest
-    needs: build-macos
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download aarch64 .app
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-aarch64-apple-darwin
-          path: universal/aarch64
-
-      - name: Download x86_64 .app
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-x86_64-apple-darwin
-          path: universal/x86_64
-
-      - name: Create universal binary
+      - name: Create universal binary via lipo
         run: |
-          APP="universal/aarch64/*.app"
-          APP=$(ls "$APP" 2>/dev/null || ls universal/aarch64/*.app)
-          BINARY="$APP/Contents/MacOS/work-pet"
-          UNIVERSAL="universal/universal-work-pet"
-          lipo -create \
-            "universal/aarch64/${BINARY##*/}" \
-            "universal/x86_64/${BINARY##*/}" \
-            -output "$UNIVERSAL"
-          echo "Universal binary created:"
+          AARCH_BIN="src-tauri/target/aarch64-apple-darwin/release/work-pet"
+          X64_BIN="src-tauri/target/x86_64-apple-darwin/release/work-pet"
+          UNIVERSAL="src-tauri/target/release/work-pet-universal"
+          lipo -create "$AARCH_BIN" "$X64_BIN" -output "$UNIVERSAL"
+          echo "=== Universal binary ==="
           file "$UNIVERSAL"
 
-      - name: Replace binary in aarch64 .app
+      - name: Replace binary in saved x86_64 app bundle
         run: |
-          BUNDLE=$(ls universal/aarch64/*.app)
-          DEST="$BUNDLE/Contents/MacOS/work-pet"
-          cp "$(ls universal/aarch64/*.app)/Contents/MacOS/work-pet" /tmp/work-pet-aarch64 2>/dev/null || true
-          cp universal/universal-work-pet "$DEST"
-          chmod +x "$DEST"
-          echo "Replacing binary in: $BUNDLE"
-          ls -la "$DEST"
+          cp src-tauri/target/release/work-pet-universal \
+             src-tauri/target/release/WorkPet-x86_64.app/Contents/MacOS/work-pet
+          chmod +x src-tauri/target/release/WorkPet-x86_64.app/Contents/MacOS/work-pet
+          codesign --force --deep --sign - \
+            src-tauri/target/release/WorkPet-x86_64.app --options runtime 2>/dev/null || true
 
-      - name: Package universal DMG
+      - name: Create universal DMG
         run: |
-          APP_BUNDLE=$(ls universal/aarch64/*.app)
-          # Re-sign with hardened runtime for universal binary
-          codesign --force --deep --sign - "$APP_BUNDLE" \
-            --options runtime --timestamp || true
-          # Use Apple's create-dmg or hdiutil to create DMG
-          cp -r "$APP_BUNDLE" Desktop
-          hdiutil create -volname "WorkPet" -srcfolder Desktop \
-            -ov -format UDZO "WorkPet-universal.dmg"
-          rm -rf Desktop
-          mv WorkPet-universal.dmg src-tauri/bin/release/bundle/dmg/
-          echo "DMG created: src-tauri/bin/release/bundle/dmg/"
-          ls -la src-tauri/bin/release/bundle/dmg/
+          APP=src-tauri/target/release/WorkPet-x86_64.app
+          OUT_DIR=src-tauri/target/release/bundle/dmg
+          mkdir -p "$OUT_DIR"
+          # Read-write temp DMG
+          hdiutil create -volname "WorkPet" \
+            -srcfolder "$APP" \
+            -fs HFS+ -format UDRW -size 300m \
+            "/tmp/WorkPet-temp.dmg"
+          # Mount, add Applications symlink, unmount
+          DEV=$(hdiutil attach -readwrite -noverify -noautoopen "/tmp/WorkPet-temp.dmg" \
+                  | grep '/dev/' | awk '{print $1}' | head -1)
+          if [ -n "$DEV" ]; then
+            MOUNT=$(hdiutil info | grep "$DEV" | awk '{print $NF}' | head -1)
+            [ -n "$MOUNT" ] && ln -s /Applications "$MOUNT/Applications"
+            hdiutil detach "$DEV"
+          fi
+          # Compress to final DMG
+          hdiutil convert "/tmp/WorkPet-temp.dmg" \
+            -format UDZO -o "$OUT_DIR/WorkPet-universal.dmg"
+          rm -f "/tmp/WorkPet-temp.dmg"
+          echo "=== DMG created ==="
+          ls -lh "$OUT_DIR/WorkPet-universal.dmg"
 
-      - name: Upload universal DMG artifact
+      - name: Upload macOS universal DMG
         uses: actions/upload-artifact@v4
         with:
           name: WorkPet-macos-universal
-          path: desktop-ui/src-tauri/bin/release/bundle/dmg/
+          path: desktop-ui/src-tauri/target/release/bundle/dmg/WorkPet-universal.dmg
           retention-days: 7
