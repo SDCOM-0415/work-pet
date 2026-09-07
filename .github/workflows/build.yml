@@ -142,7 +142,7 @@ jobs:
 
       - name: Build universal macOS app
         working-directory: desktop-ui
-        run: npx tauri build --target universal-apple-darwin
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
 
       - name: Verify Universal app and bundled Node
         working-directory: desktop-ui
