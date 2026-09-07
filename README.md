@@ -64,11 +64,20 @@
 
 ## 安装
 
+### Windows
+
 1. 在 [Releases](../../releases)（或 Actions 构建产物）下载最新的 Windows 安装包（如 `WorkPet_x64-setup.exe`）
 2. 双击安装器完成安装
 3. 打开 `Work Pet`：首次使用请先在各 AI 客户端登录一次账号，Work Pet 会自动备份进账号库
 
-> 无需安装 Node.js / Python——运行时已随安装包捆绑。
+### macOS（Universal，Apple Silicon + Intel）
+
+1. 在 [Releases](../../releases)（或 Actions 构建产物）下载 `WorkPet-universal.dmg`
+2. 双击挂载 DMG，将 `WorkPet.app` 拖入「应用程序」
+3. 首次启动时如需从"App 商店未识别的应用"放行：系统偏好设置 → 隐私与安全性 → 仍要打开
+4. 打开 `Work Pet`：首次使用请先在各 AI 客户端登录一次账号，Work Pet 会自动备份进账号库
+
+> 无需安装 Node.js / Python——运行时已随安装包捆绑（x86_64 与 arm64 通用二进制，双架构自动运行）。
 
 ---
 

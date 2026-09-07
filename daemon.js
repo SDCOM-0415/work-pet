@@ -20,7 +20,7 @@ const path = require('path');
 const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
-const { spawn, execFileSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const APP_BRAND = 'TraeWork';
 const DAEMON_VERSION = '1.0.0';
@@ -116,17 +116,18 @@ function getAuth() {
   return { token: info.token || '', userId: info.userId || '', account: info.account || {}, deviceId, info };
 }
 
-// ---------------- 便携数据目录 ----------------
-// 账号备份/设置/积分缓存全部存放在数据目录（默认与 daemon.js 同目录）；
-// 由 pet.exe 拉起时通过环境变量指定为 exe 同目录，不写 C 盘 AppData。
-// exe 不可写时回退到 %APPDATA%\WorkPet。
+// 便携数据目录：账号备份/设置/积分缓存全部存放在数据目录（默认与 daemon.js 同目录）；
+// 由 pet 启动时通过环境变量指定为 exe 同目录，不写系统 AppData/Application Support。
+// 目录不可写时回退到平台标准路径。
 let DATA_ROOT =
   (process.env.WORKPET_DATA_DIR && fs.existsSync(process.env.WORKPET_DATA_DIR))
     ? process.env.WORKPET_DATA_DIR
     : __dirname;
-// 数据目录不可写（exe 被放在只读位置）时回退到 %APPDATA%\WorkPet
+// 数据目录不可写时回退到平台标准用户数据目录
 const FALLBACK_DATA_DIR = path.join(
-  process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+  isMac
+    ? path.join(os.homedir(), 'Library', 'Application Support')
+    : (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')),
   'WorkPet'
 );
 try {
@@ -1767,17 +1768,37 @@ async function injectWidget(reason) {
 }
 
 // ---------------- 进程管理（确保 TraeWork 以 CDP 模式运行） ----------------
-const EXE_NAME = path.basename(CFG.exe || 'TRAE SOLO CN.exe');
+const EXE_NAME = isMac
+  ? (CFG.exe ? path.basename(CFG.exe).replace(/\.app\/Contents\/MacOS\/.*$/, '').trim() || 'TRAE SOLO CN' : 'TRAE SOLO CN')
+  : path.basename(CFG.exe || 'TRAE SOLO CN.exe');
 
 function isProcessRunning() {
+  if (isMac) {
+    try {
+      const out = execSync(['pgrep', '-x', 'Electron']);
+      if (!out.trim()) return false;
+      for (const pid of out.trim().split(/\s+/)) {
+        try {
+          const args = execSync(['ps', '-p', pid.trim(), '-o', 'command=']);
+          if (args.includes('TRAE SOLO CN') || args.includes('Trae CN') || args.includes('TraeWork')) return true;
+        } catch (_) {}
+      }
+      return false;
+    } catch (_) { return false; }
+  }
   try {
-    const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq ' + EXE_NAME, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
+    const out = execSync(['tasklist', '/FI', 'IMAGENAME eq ' + EXE_NAME, '/FO', 'CSV', '/NH'], { encoding: 'utf8' });
     return out.includes(EXE_NAME);
   } catch (_) { return false; }
 }
 
 function killTraeWork() {
-  try { execFileSync('taskkill', ['/IM', EXE_NAME, '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+  if (isMac) {
+    try { execSync(['osascript', '-e', 'quit app "TRAE SOLO CN"']); } catch (_) {}
+    try { execSync(['osascript', '-e', 'quit app "Trae CN"']); } catch (_) {}
+  } else {
+    try { execSync(['taskkill', '/IM', EXE_NAME, '/F', '/T'], { stdio: 'ignore' }); } catch (_) {}
+  }
 }
 
 async function ensureTraeWorkWithCdp() {
@@ -1794,7 +1815,12 @@ async function ensureTraeWorkWithCdp() {
   // 最多两轮拉起：进程中途退出（单实例锁残留）时自动重试一次
   for (let attempt = 1; attempt <= 2; attempt++) {
     log(`[proc] 启动: ${CFG.exe} --remote-debugging-port=${CDP_PORT} (第 ${attempt} 次)`);
-    spawn(CFG.exe, ['--remote-debugging-port=' + CDP_PORT], { stdio: 'ignore', detached: true });
+    if (isMac) {
+      const appname = CFG.exe ? path.basename(CFG.exe).replace(/\.app\/Contents\/MacOS\/.*$/, '').trim() : 'TRAE SOLO CN';
+      spawn('open', ['-g', '-a', appname, '--args', '--remote-debugging-port=' + CDP_PORT], { stdio: 'ignore', detached: true });
+    } else {
+      spawn(CFG.exe, ['--remote-debugging-port=' + CDP_PORT], { stdio: 'ignore', detached: true });
+    }
     const deadline = Date.now() + CDP_STARTUP_TIMEOUT_MS;
     while (Date.now() < deadline) {
       const port = await findCdpEndpoint().catch(() => 0);

@@ -177,17 +177,20 @@ fn find_daemon_js() -> Option<std::path::PathBuf> {
     None
 }
 
-/// 在常见安装位置定位 node.exe。
+/// 在常见安装位置定位 node 可执行文件（Windows 用 node.exe，macOS 用 node）。
 fn find_node() -> String {
     let mut v: Vec<std::path::PathBuf> = Vec::new();
     // 优先使用随安装包捆绑的 node 运行时（用户无需自行安装 Node.js）
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            v.push(dir.join("node"));
+            v.push(dir.join("binaries").join("node"));
             v.push(dir.join("node.exe"));
             v.push(dir.join("binaries").join("node.exe"));
-            // 开发环境：从 exe 目录向上找 binaries/node.exe
+            // 开发环境：从 exe 目录向上找 binaries/node
             let mut d = dir.to_path_buf();
             for _ in 0..5 {
+                v.push(d.join("binaries").join("node"));
                 v.push(d.join("binaries").join("node.exe"));
                 d = match d.parent() {
                     Some(p) => p.to_path_buf(),
@@ -205,7 +208,17 @@ fn find_node() -> String {
     if let Ok(la) = std::env::var("LOCALAPPDATA") {
         v.push(Path::new(&la).join("Programs").join("nodejs").join("node.exe"));
     }
-    for p in v {
+    // macOS：检查 AppContents/Resources 及系统路径
+    if cfg!(target_os = "macos") {
+        if let Ok(home) = std::env::var("HOME") {
+            v.push(Path::new(&home).join(".nvm/versions/node/latest/bin/node").to_path_buf());
+            v.push(Path::new(&home).join(".volta/bin/node").to_path_buf());
+        }
+        v.push(Path::new("/usr/local/bin/node").to_path_buf());
+        v.push(Path::new("/opt/homebrew/bin/node").to_path_buf());
+        v.push(Path::new("/usr/bin/node").to_path_buf());
+    }
+    for p in &v {
         if p.is_file() {
             if let Some(s) = p.to_str() {
                 return s.to_string();
