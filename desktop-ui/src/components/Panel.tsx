@@ -263,7 +263,7 @@ export default function Panel(p: PanelProps) {
         <BootstrapNotice bootstrap={p.bootstrap} bootError={p.bootError} />
       ) : p.error && !p.status && tab === "tw" && p.accounts.length === 0 ? (
         <StatusErrorNotice error={p.error} />
-      ) : p.loading && !p.status && tab === "tw" ? (
+      ) : p.loading && !p.status && tab === "tw" && p.accounts.length === 0 ? (
         <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 读取签到状态…
         </div>
