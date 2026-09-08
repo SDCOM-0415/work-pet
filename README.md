@@ -2,7 +2,7 @@
 
 **语言：** 简体中文
 
-> **Work Pet 是多 AI Agent（WorkBuddy、CodeBuddy、TraeWork）签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。账号与配置全部留在本机。**
+> **Work Pet 是多 AI Agent（WorkBuddy、CodeBuddy、TraeWork、AutoClaw）签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。账号与配置全部留在本机。**
 > 本机回环 CDP 注入 · 不改官方安装包 · 安装后无需 Node.js / Python 环境
 
 一个基于 **Chrome DevTools Protocol (CDP)** 的多 AI 编程客户端增强工具。
@@ -11,6 +11,22 @@
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blueviolet)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
 ![Node](https://img.shields.io/badge/node-bundled-green)
+
+## 支持的客户端
+
+<table>
+  <tr>
+    <td align="center"><a href="https://www.codebuddy.cn/work/"><img src="desktop-ui/src/assets/workbuddy.png" width="40" alt="WorkBuddy"/><br><strong>WorkBuddy</strong></a></td>
+    <td align="center"><a href="https://www.codebuddy.cn/"><img src="desktop-ui/src/assets/codebuddy.png" width="40" alt="CodeBuddy"/><br><strong>CodeBuddy</strong></a></td>
+    <td align="center"><a href="https://www.trae.cn/work"><img src="desktop-ui/src/assets/traework.png" width="40" alt="TraeWork"/><br><strong>TraeWork</strong></a></td>
+    <td align="center"><a href="https://autoclaw.z.ai/"><img src="desktop-ui/src/assets/autoclaw.png" width="40" alt="AutoClaw"/><br><strong>AutoClaw</strong></a></td>
+  </tr>
+</table>
+
+- [WorkBuddy](https://www.codebuddy.cn/work/)：腾讯 WorkBuddy AI 办公 Agent
+- [CodeBuddy](https://www.codebuddy.cn/)：腾讯云代码助手
+- [TraeWork](https://www.trae.cn/work)：字节跳动 TRAE AI 原生工作台
+- [AutoClaw](https://autoclaw.z.ai/)：Z.ai 本地 AI Agent
 
 ---
 
@@ -37,7 +53,7 @@
 - **多账号管理**：每个客户端的账号集中展示，一键切换（自动以调试模式重启客户端并登录新账号）。
 - **积分条**：按到期时间归类、段长与积分数量成正比，悬停查看到期日期与剩余天数；最近一次到期醒目高亮。
 - **设备签到感知**：对按"设备"限额的签到自动轮换账号、按天公平分配，并在面板上一致呈现。
-- **单文件备份/恢复**：三端全部账号导出为一个 `WorkPet-accounts-<时间戳>.json`，拷到其他电脑一键恢复。
+- **单文件备份/恢复**：四端全部账号导出为一个 `WorkPet-accounts-<时间戳>.json`，拷到其他电脑一键恢复。
 - **桌面宠物**：3D 机器人形象（眨眼/天线呼吸/浮动动画），可缩到最小或隐藏到托盘，右键快捷菜单。
 - **深色/浅色主题**、字号大小调节、标签顺序自定义（拖拽并记住）。
 
@@ -56,7 +72,7 @@
 
 | 区域 | 能做什么 |
 | ---- | -------- |
-| **WorkBuddy / CodeBuddy / TraeWork** | 各端账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端 |
+| **WorkBuddy / CodeBuddy / TraeWork / AutoClaw** | 各端账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端 |
 | **设置** | 随系统启动、字体大小、显示完整手机号、隐藏桌面机器人、启动客户端开关、账号备份 / 恢复 |
 | **关于** | 版本与项目说明 |
 
@@ -94,8 +110,9 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
 | **WorkBuddy** | 纯读本地数据文件 | 纯 HTTP API | 纯 HTTP API | ❌ **全程无感，无需打开** |
 | **CodeBuddy** | 纯读本地数据文件 | 纯 HTTP API | 纯 HTTP API | ❌ **全程无感，无需打开** |
 | **TraeWork** | 纯读本地数据文件（内置 AES 解密） | 纯 HTTP API | 借宿主官方 IPC 秒级签到（抗 9074 拦截） | ⚠️ **仅当天未签到时静默唤醒 1~2 秒，签完即自动退出** |
+| **AutoClaw** | 纯读本地 `auth.json`（本地解密） | 纯 HTTP API | 纯 HTTP API | ❌ **全程无感，无需打开客户端** |
 
-- **获取登录态完全无需打开客户端**：WorkPet 内部实现了与官方完全一致的解密算法，直接读取本地磁盘（`storage.json`）即可在毫秒级解出昵称、头像与 Token，无需启动客户端。
+- **获取登录态完全无需打开客户端**：Work Pet 对各客户端的本地登录数据进行读取与解密，直接从磁盘解出昵称、头像与 Token，无需启动客户端。
 - **启动时 TraeWork 闪开闪关的原因**：Trae 服务端对第三方网络库的直接 HTTP 签到有强风控拦截（返回 `9074 当前参与用户太多`），但官方内核的 IPC 请求可以稳定成功。因此，**仅在账号当天尚未签到时**，WorkPet 会带 `--remote-debugging-port` 静默唤醒 TraeWork 触发签到，**签完即刻自动退出**；若今天已签到过，则完全不会启动它。
 
 ---
@@ -136,8 +153,6 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
 
 ## 🙏 致谢
 
-- [智谱 Z.ai](https://z.ai/) —— 本程序的**全部代码**由 [ZCode](https://zcode.z.ai/)（GLM-5.3 官方 Harness）在
-  **3 亿 Token 周末免费构建活动**期间完成：从架构设计、CDP 注入引擎、三端签到逻辑到桌面宠物 UI。
 - [WorkDaddy](https://github.com/babygoton/WorkDaddy) —— WorkBuddy/CodeBuddy 端签到与积分解析逻辑的移植来源（AGPL-3.0）。
 
 ---
