@@ -254,11 +254,10 @@ export default function Panel(p: PanelProps) {
         <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 读取签到状态…
         </div>
-      ) : tab === "tw" ? (
-        <AccountsTab p={p} checked={checked} />
-      ) : tab === "wb" || tab === "cb" || tab === "ac" ? (
-        /* WorkBuddy / CodeBuddy / AutoClaw 常驻挂载，切 Tab 不重新拉数据 */
+      ) : (
         <>
+          {/* WorkBuddy / CodeBuddy / AutoClaw 客户端 Tab 常驻挂载：
+              切到 TraeWork/设置/关于再切回来也不卸载重建、不重新拉数据，积分直接显示已有缓存 */}
           <div className={cn("min-h-0 flex-1 flex-col", tab === "wb" ? "flex" : "hidden")}>
             <WorkBuddyTab
               showPhone={!!showPhone}
@@ -286,29 +285,30 @@ export default function Panel(p: PanelProps) {
               onLaunch={(force) => invoke("launch_autoclaw", { force: force ?? false }).then(() => undefined)}
             />
           </div>
+          {tab === "tw" && <AccountsTab p={p} checked={checked} />}
+          {tab === "settings" && (
+            <SettingsTab
+              showPhone={showPhone}
+              onShowPhoneChange={setShowPhone}
+              tabShowText={tabShowText}
+              onTabShowTextChange={setTabShowText}
+              fontScale={fontScale}
+              onFontScaleChange={setFontScale}
+              cbLaunch={cbLaunch}
+              onCbLaunchChange={setCbLaunch}
+              acLaunch={acLaunch}
+              onAcLaunchChange={setAcLaunch}
+              hidePet={p.hidePet}
+              hidePetState={hidePetState}
+              onHidePetChange={(v) => {
+                setHidePetState(v);
+                p.onHidePetChange(v);
+              }}
+              onRestored={p.onRefresh}
+            />
+          )}
+          {tab === "about" && <AboutTab updateInfo={p.updateInfo} />}
         </>
-      ) : tab === "settings" ? (
-        <SettingsTab
-          showPhone={showPhone}
-          onShowPhoneChange={setShowPhone}
-          tabShowText={tabShowText}
-          onTabShowTextChange={setTabShowText}
-          fontScale={fontScale}
-          onFontScaleChange={setFontScale}
-          cbLaunch={cbLaunch}
-          onCbLaunchChange={setCbLaunch}
-          acLaunch={acLaunch}
-          onAcLaunchChange={setAcLaunch}
-          hidePet={p.hidePet}
-          hidePetState={hidePetState}
-          onHidePetChange={(v) => {
-            setHidePetState(v);
-            p.onHidePetChange(v);
-          }}
-          onRestored={p.onRefresh}
-        />
-      ) : (
-        <AboutTab updateInfo={p.updateInfo} />
       )}
     </Card>
   );
@@ -374,13 +374,7 @@ function AccountsTab({ p, checked }: { p: PanelProps; checked: boolean }) {
         <span className="text-muted-foreground">
           总积分 <span className="font-semibold text-foreground">{fmtCredits(totalCredits)}</span>
         </span>
-        {checked ? (
-          <Badge className="ml-auto h-5 rounded-full border-0 bg-success px-2 text-[10px] text-white">
-            今日已签到 ✓
-          </Badge>
-        ) : (
-          <span className="ml-auto" />
-        )}
+        <span className="ml-auto" />
       </div>
 
       {/* 账号卡片列表 */}

@@ -53,6 +53,22 @@ export interface SharedCardProps {
 export default function SharedAccountCard(p: SharedCardProps) {
   const [expanded, setExpanded] = useState(false);
   const expiry = nextExpiry(p.packs);
+  // Cookie 时限：已过期（早于当前时刻）→ 红色提示重新登录；未过期显示到期日
+  const cookieSec = p.cookieExpireSec != null && p.cookieExpireSec > 0 ? p.cookieExpireSec : null;
+  const cookieExpired = cookieSec != null && cookieSec * 1000 <= Date.now();
+  const cookieTag =
+    cookieSec == null ? null : cookieExpired ? (
+      <span
+        className="ml-auto shrink-0 rounded-md bg-destructive/10 px-1.5 py-0.5 font-medium text-destructive"
+        title={`Cookie 已于 ${fmtDateSec(cookieSec)} 过期，请在客户端重新登录`}
+      >
+        登录已过期 · 请重新登录
+      </span>
+    ) : (
+      <span className="ml-auto shrink-0" title={`Cookie 时限 ${fmtDateSec(cookieSec)}`}>
+        Cookie 时限 {fmtShortDate(cookieSec)}
+      </span>
+    );
 
   return (
     <div className={cn("rounded-xl p-3", p.isCurrent ? "bg-card shadow-sm ring-1 ring-border" : "bg-muted/60")}>
@@ -175,14 +191,7 @@ export default function SharedAccountCard(p: SharedCardProps) {
                 最近过期 {fmtMonthDay(expiry.sec)}（{fmtCredits(expiry.amount)} 积分）
               </span>
             )}
-            {p.cookieExpireSec != null && p.cookieExpireSec > 0 && (
-              <span
-                className="ml-auto shrink-0"
-                title={`Cookie 时限 ${fmtDateSec(p.cookieExpireSec)}`}
-              >
-                Cookie 时限 {fmtShortDate(p.cookieExpireSec)}
-              </span>
-            )}
+            {cookieTag}
           </button>
           {expanded && (
             <div className="mt-1 flex flex-col gap-1 rounded-lg bg-muted/60 p-2">
@@ -217,10 +226,8 @@ export default function SharedAccountCard(p: SharedCardProps) {
           )}
         </>
       )}
-      {p.packs.length === 0 && p.cookieExpireSec != null && p.cookieExpireSec > 0 && (
-        <div className="mt-1.5 flex items-center text-[10px] text-muted-foreground">
-          <span className="ml-auto shrink-0">Cookie 时限 {fmtShortDate(p.cookieExpireSec)}</span>
-        </div>
+      {p.packs.length === 0 && cookieTag && (
+        <div className="mt-1.5 flex items-center text-[10px] text-muted-foreground">{cookieTag}</div>
       )}
     </div>
   );
