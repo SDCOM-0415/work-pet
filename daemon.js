@@ -803,47 +803,107 @@ const CLIENT_PROFILES = {
   },
 };
 
-function acDpapiDecrypt(data) {
+// ---------------- AutoClaw 登录态解密（DPAPI + AES-256-GCM） ----------------
+// Node 无内置 DPAPI，解 Local State 的 key 需要拉起 powershell。
+// 绝不能像旧实现那样用 execFileSync 同步等它：powershell 一旦卡死（曾实测挂死数分钟），
+// 整个 daemon 事件循环被堵住，HTTP 全部无响应，前端就报「后台服务未运行」。
+// 因此这里统一为：异步 spawn + 12s 硬超时（按进程树强杀）+ AES key 只解一次并缓存。
+const AC_KEY_PENDING = Symbol('ac-key-pending');
+let acKeyCache = null;    // 已解出的 AES-256 key（Buffer），只解密一次
+let acKeyPromise = null;  // 进行中的异步解密（并发共享）
+
+/** 仅当 win-dpapi 原生模块可用时同步解密；不可用返回 null（走 powershell） */
+function acDpapiNative(data) {
   try {
     const { CryptUnprotectData } = (() => { try { return require('win-dpapi'); } catch (_) { return {}; } })();
     if (CryptUnprotectData) return CryptUnprotectData(Buffer.from(data));
   } catch (_) {}
-  // Node 无内置 DPAPI；走 powershell -EncodedCommand（避免参数拼接/编码坑）
-  try {
+  return null;
+}
+
+/** 异步跑一次 powershell Unprotect；12s 未完成则按进程树强杀，绝不悬挂 */
+function acDpapiViaPowershell(data) {
+  return new Promise((resolve, reject) => {
     const inB64 = Buffer.from(data).toString('base64');
-    const ps = `$ProgressPreference='SilentlyContinue'; Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${inB64}'), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser))`;
+    const ps = `$ProgressPreference='SilentlyContinue'; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${inB64}'), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser))`;
     const encCmd = Buffer.from(ps, 'utf16le').toString('base64');
-    const out = execFileSync('powershell', ['-NoProfile', '-EncodedCommand', encCmd], { encoding: 'utf8', timeout: 15000, windowsHide: true }).trim();
-    // PowerShell 5 会往 stdout 前面打 CLIXML 进度块，去掉到 </Objs> 之后的部分
-    const idx = out.lastIndexOf('</Objs>');
-    const clean = idx >= 0 ? out.slice(idx + 7).trim() : out;
-    return Buffer.from(clean, 'base64');
-  } catch (e) {
-    throw new Error('DPAPI 解密失败: ' + e.message);
+    const child = spawn('powershell', ['-NoProfile', '-EncodedCommand', encCmd], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // 只杀 powershell 不够（其子进程可能还握着 stdout 管道）；按进程树强杀
+      try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch (_) {}
+      reject(new Error('DPAPI 解密超时（已强杀 powershell 进程树）'));
+    }, 12000);
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', () => {});
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error('DPAPI powershell 启动失败: ' + e.message)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (code !== 0) { reject(new Error('DPAPI powershell 退出码 ' + code)); return; }
+      try {
+        // PowerShell 5 会在 stdout 前打 CLIXML 进度块，去掉到 </Objs> 之后的部分
+        const idx = out.lastIndexOf('</Objs>');
+        const clean = (idx >= 0 ? out.slice(idx + 7) : out).trim();
+        const key = Buffer.from(clean, 'base64');
+        if (!key.length) throw new Error('解密结果为空');
+        resolve(key);
+      } catch (e) { reject(new Error('DPAPI 解密结果解析失败: ' + e.message)); }
+    });
+  });
+}
+
+/** 获取 AutoClaw AES key：只解一次并缓存；并发调用共享同一个 Promise */
+function acRequestKey() {
+  if (acKeyCache) return Promise.resolve(acKeyCache);
+  if (!acKeyPromise) {
+    acKeyPromise = (async () => {
+      const ls = readJsonOrNull(AC_LOCAL_STATE);
+      const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
+      if (!enc) throw new Error('AutoClaw Local State 无 os_crypt.encrypted_key');
+      const raw = Buffer.from(enc, 'base64');
+      if (raw.slice(0, 5).toString() !== 'DPAPI') return raw;
+      const viaNative = acDpapiNative(raw.slice(5));
+      if (viaNative) return viaNative;
+      return await acDpapiViaPowershell(raw.slice(5));
+    })().then((k) => { acKeyCache = k; acKeyPromise = null; return k; })
+      .catch((e) => { acKeyPromise = null; throw e; });
   }
+  return acKeyPromise;
 }
 
-function acAesKey() {
-  const ls = readJsonOrNull(AC_LOCAL_STATE);
-  const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
-  if (!enc) throw new Error('AutoClaw Local State 无 os_crypt.encrypted_key');
-  const raw = Buffer.from(enc, 'base64');
-  if (raw.slice(0, 5).toString() === 'DPAPI') return acDpapiDecrypt(raw.slice(5));
-  return raw;
+/** 后台预热 key（静默失败；daemon 启动时调用，让首次读账号前已就绪） */
+function acWarmKey() {
+  acRequestKey().catch((e) => log('[client:ac] AES key 预取失败: ' + e.message));
 }
 
-function acDecryptToken(encStr) {
+/** 同步取 key：已缓存直接返回；未就绪抛 AC_KEY_PENDING（调用方快速失败，绝不阻塞） */
+function acKeySync() {
+  if (acKeyCache) return acKeyCache;
+  throw AC_KEY_PENDING;
+}
+
+/** 纯 AES-256-GCM 解密单个 token；key 可显式传入（异步路径）或走缓存（同步路径） */
+function acDecryptToken(encStr, key) {
   if (!encStr) return '';
   if (!encStr.startsWith('enc:')) return encStr.replace(/^Bearer\s+/, '');
   const raw = Buffer.from(encStr.slice(4), 'base64');
   if (raw.slice(0, 3).toString() !== 'v10') return encStr.replace(/^Bearer\s+/, '');
-  const key = acAesKey();
+  const k = key || acKeySync(); // 同步路径未就绪时抛 AC_KEY_PENDING
   const nonce = raw.slice(3, 15), ct = raw.slice(15);
   const tag = ct.slice(ct.length - 16), body = ct.slice(0, ct.length - 16);
-  const dec = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+  const dec = crypto.createDecipheriv('aes-256-gcm', k, nonce);
   dec.setAuthTag(tag);
   const pt = Buffer.concat([dec.update(body), dec.final()]);
   return pt.toString('utf8').replace(/^Bearer\s+/, '');
+}
+
+/** 异步解密单 token（等待/触发 key 就绪后再解） */
+async function acDecryptTokenAsync(encStr) {
+  if (!encStr || !encStr.startsWith('enc:')) return acDecryptToken(encStr);
+  return acDecryptToken(encStr, await acRequestKey());
 }
 
 /** 读取 AutoClaw 登录态（解密后），返回 { token, refreshToken, userId, phone, deviceId, raw } 或 { error } */
@@ -851,25 +911,46 @@ function acReadAuth() {
   const raw = readJsonOrNull(AC_AUTH_FILE);
   if (!raw || !raw.token) return null;
   try {
-    const token = acDecryptToken(raw.token);
-    const refreshToken = acDecryptToken(raw.refreshToken || '');
-    let jwt = {};
-    try {
-      const p = token.split('.')[1];
-      if (p) jwt = JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
-    } catch (_) {}
-    return {
-      token,
-      refreshToken,
-      userId: (jwt.user_id || raw.userInfo && raw.userInfo.user_id || ''),
-      phone: (raw.userInfo && (raw.userInfo.user_phone || raw.userInfo.phone)) || '',
-      deviceId: raw.deviceId || '',
-      jwtExp: jwt.exp ? jwt.exp * 1000 : null,
-      raw,
-    };
+    const key = acKeySync();
+    const token = acDecryptToken(raw.token, key);
+    const refreshToken = acDecryptToken(raw.refreshToken || '', key);
+    return acBuildAuth(raw, token, refreshToken);
+  } catch (e) {
+    // key 未就绪（AC_KEY_PENDING）或解密失败：快速返回错误，绝不阻塞等待 powershell
+    return { error: e === AC_KEY_PENDING ? 'AutoClaw 登录态解密未就绪（稍后自动重试）' : 'AutoClaw 登录态解密失败: ' + e.message };
+  }
+}
+
+/** 异步版 acReadAuth：先确保 AES key 就绪（内部 12s 硬超时+树杀），再同步解密 */
+async function acReadAuthAsync() {
+  const raw = readJsonOrNull(AC_AUTH_FILE);
+  if (!raw || !raw.token) return null;
+  try {
+    const key = await acRequestKey();
+    const token = acDecryptToken(raw.token, key);
+    const refreshToken = acDecryptToken(raw.refreshToken || '', key);
+    return acBuildAuth(raw, token, refreshToken);
   } catch (e) {
     return { error: 'AutoClaw 登录态解密失败: ' + e.message };
   }
+}
+
+/** 由明文 token/refreshToken 组装统一形状 */
+function acBuildAuth(raw, token, refreshToken) {
+  let jwt = {};
+  try {
+    const p = token.split('.')[1];
+    if (p) jwt = JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+  } catch (_) {}
+  return {
+    token,
+    refreshToken,
+    userId: (jwt.user_id || raw.userInfo && raw.userInfo.user_id || ''),
+    phone: (raw.userInfo && (raw.userInfo.user_phone || raw.userInfo.phone)) || '',
+    deviceId: raw.deviceId || '',
+    jwtExp: jwt.exp ? jwt.exp * 1000 : null,
+    raw,
+  };
 }
 
 function acSignHeaders(extra) {
@@ -890,7 +971,7 @@ function acSignHeaders(extra) {
 
 /** AutoClaw refresh：refresh_token 轮换，成功后回写 auth.json（加密格式保持原样：只换 token 字段） */
 async function acRefreshToken() {
-  const auth = acReadAuth();
+  const auth = await acReadAuthAsync();
   if (!auth || auth.error || !auth.refreshToken) throw new Error('AutoClaw 无 refresh_token');
   const body = JSON.stringify({ source_id: 'autoclaw', device_id: auth.deviceId, refresh_token: auth.refreshToken });
   const r = await fetch(AC_API_HOST + '/userapi/v1/refresh', {
@@ -920,7 +1001,7 @@ async function acPersistRefreshedToken(newAccess, newRefresh) {
     const raw = readJsonOrNull(AC_AUTH_FILE);
     if (!raw) return false;
     // 尝试用同 key 重新加密（Electron safeStorage v10 = AES-256-GCM，key 已解出）
-    const key = acAesKey();
+    const key = await acRequestKey();
     const enc = (plain) => {
       const nonce = crypto.randomBytes(12);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
@@ -1318,6 +1399,8 @@ function clientSyncTokenExpiryAfterCheckin(profileId, uid, respBody) {
 async function clientClaimDailyForAll(profileId) {
   const st = clientCheckinState[profileId];
   if (st.inFlight || clientClaimGlobalLock) return { skipped: true, reason: 'in-flight' };
+  // AutoClaw 首次读账号前确保 AES key 已就绪（异步，12s 硬超时；失败则本轮按无 key 处理）
+  if (profileId === 'ac') { try { await acRequestKey(); } catch (_) {} }
   const accounts = clientListAccounts(profileId).accounts;
   if (!accounts.length) return { skipped: true, reason: 'no-accounts' };
   st.inFlight = true;
@@ -1486,16 +1569,21 @@ async function clientReloadViaCdp(profileId) {
 }
 
 // 登录文件变化 → 同步进账号库（每次打开/切换客户端都会重写 auth 文件）
+// AutoClaw 的同步要先异步解密（key 缓存+树杀超时），不能同步阻塞事件循环
 for (const pid of ['wb', 'cb', 'ac']) {
   try {
     fs.watchFile(CLIENT_PROFILES[pid].authFile, { interval: 5000 }, (cur, prev) => {
       if (!fs.existsSync(CLIENT_PROFILES[pid].authFile)) return;
       if (cur.mtimeMs !== prev.mtimeMs) {
-        try { clientSyncStore(pid); log('[client:' + pid + '] 登录文件变化，已同步账号库'); } catch (_) {}
+        const sync = () => { try { clientSyncStore(pid); log('[client:' + pid + '] 登录文件变化，已同步账号库'); } catch (_) {} };
+        if (pid === 'ac') acRequestKey().then(sync).catch(() => {});
+        else sync();
       }
     });
   } catch (_) {}
 }
+// 启动即预热 AutoClaw AES key（后台异步，不阻塞；避免首次读账号时等解密）
+try { if (fs.existsSync(AC_AUTH_FILE)) acWarmKey(); } catch (_) {}
 
 
 async function rotateAllAccounts({ claim }) {
@@ -1965,6 +2053,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (parts[4] === 'accounts') {
         clientClaimDailyForAll(pid).catch((e) => log('[client:' + pid + '] 自动签到失败: ' + e.message));
+        // AutoClaw 先确保解密 key 就绪，否则首次列表拿不到当前账号（同步路径快速失败不阻塞）
+        if (pid === 'ac') { try { await acRequestKey(); } catch (_) {} }
         const list = clientListAccounts(pid);
         return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
       }
@@ -2395,25 +2485,28 @@ async function main() {
 
   // AutoClaw：每 5 分钟把 auth.json 里最新的 JWT exp（Cookie 时限）同步进账号库 ac 段；
   // token 快过期（<2h）时自动 refresh 并回写 auth.json，时限跟随签到/刷新即时续期。
+  // 解密走异步 acReadAuthAsync（key 缓存 + 12s 硬超时树杀），不阻塞事件循环。
   setInterval(() => {
     if (claimAllJob.running || clientClaimGlobalLock) return;
-    try {
-      const a = acReadAuth();
-      if (!a || a.error || !a.token) return;
-      acSyncStore(a);
-      const exp = a.jwtExp || acJwtExpMs(a.token);
-      if (exp != null && exp - Date.now() < 2 * 3600 * 1000 && a.refreshToken) {
-        log('[client:ac] token 快过期，自动 refresh');
-        acRefreshToken()
-          .then(async (r) => {
-            const newExp = acJwtExpMs(r.accessToken);
-            await acPersistRefreshedToken(r.accessToken, r.refreshToken);
-            acSyncStoreAfterRefresh(r.accessToken, r.refreshToken, newExp);
-            log('[client:ac] refresh 完成，新时限 -> ' + (newExp ? new Date(newExp).toISOString() : '(无)'));
-          })
-          .catch((e) => log('[client:ac] 自动 refresh 失败: ' + e.message));
-      }
-    } catch (_) {}
+    (async () => {
+      try {
+        const a = await acReadAuthAsync();
+        if (!a || a.error || !a.token) return;
+        acSyncStore(a);
+        const exp = a.jwtExp || acJwtExpMs(a.token);
+        if (exp != null && exp - Date.now() < 2 * 3600 * 1000 && a.refreshToken) {
+          log('[client:ac] token 快过期，自动 refresh');
+          acRefreshToken()
+            .then(async (r) => {
+              const newExp = acJwtExpMs(r.accessToken);
+              await acPersistRefreshedToken(r.accessToken, r.refreshToken);
+              acSyncStoreAfterRefresh(r.accessToken, r.refreshToken, newExp);
+              log('[client:ac] refresh 完成，新时限 -> ' + (newExp ? new Date(newExp).toISOString() : '(无)'));
+            })
+            .catch((e) => log('[client:ac] 自动 refresh 失败: ' + e.message));
+        }
+      } catch (_) {}
+    })();
   }, 5 * 60 * 1000).unref();
 
   // 设置项：打开 Pet 时同时启动 AutoClaw（默认关闭）
