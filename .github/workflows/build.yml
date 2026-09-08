@@ -47,12 +47,15 @@ jobs:
             desktop-ui/src-tauri/target/release/workpet.exe
             desktop-ui/src-tauri/target/release/bundle/nsis/*.exe
 
-      - name: Update v1.0.0 Release
+      - name: Publish release (tag = version from tauri.conf.json)
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $conf = Get-Content -Raw "desktop-ui/src-tauri/tauri.conf.json" | ConvertFrom-Json
+          $ver = $conf.version
+          $tag = "v$ver"
           $installer = Get-ChildItem -Path "desktop-ui/src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
           if ($installer) {
-            gh release upload v1.0.0 "$($installer.FullName)#WorkPet_1.0.0_x64-setup.exe" --clobber -R ${{ github.repository }}
+            gh release create "$tag" "$($installer.FullName)#WorkPet_${ver}_x64-setup.exe" --repo "${{ github.repository }}" --title "WorkPet $ver" --notes "WorkPet $ver 自动构建" || gh release upload "$tag" "$($installer.FullName)#WorkPet_${ver}_x64-setup.exe" --clobber --repo "${{ github.repository }}"
           }

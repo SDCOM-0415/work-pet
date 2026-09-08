@@ -23,7 +23,8 @@ const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
 const APP_BRAND = 'TraeWork';
-const DAEMON_VERSION = '1.0.0';
+const DAEMON_VERSION = '1.0.1';
+const APP_VERSION = DAEMON_VERSION;
 const HOST = '127.0.0.1';
 const CDP_PORT = 9222;
 const UI_PORT = parseInt(process.env.TRAEWORK_UI_PORT || '47921', 10);
@@ -439,7 +440,7 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'accounts'] };
+const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'accounts'], tabShowText: false };
 function loadSettings() {
   try {
     return Object.assign({}, SETTING_DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
@@ -1707,7 +1708,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       const s = loadSettings();
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
     }
     if (req.method === 'POST' && url.pathname === '/api/config') {
       const body = await readBody(req);
@@ -1718,6 +1719,7 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.fontScale === 'number' && body.fontScale >= 0.8 && body.fontScale <= 1.5) patch.fontScale = body.fontScale;
       if (typeof body.cbLaunchOnStart === 'boolean') patch.cbLaunchOnStart = body.cbLaunchOnStart;
       if (typeof body.hidePet === 'boolean') patch.hidePet = body.hidePet;
+      if (typeof body.tabShowText === 'boolean') patch.tabShowText = body.tabShowText;
       if (Array.isArray(body.tabOrder)) {
         const known = ['wb', 'cb', 'accounts'];
         const order = Array.from(new Set(body.tabOrder.map((t) => String(t))).values()).filter((t) => known.includes(t));
@@ -1725,14 +1727,14 @@ const server = http.createServer(async (req, res) => {
       }
       const s = saveSettings(patch);
       log('[config] 已保存设置: ' + JSON.stringify(patch));
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
     }
     if (req.method === 'GET' && url.pathname === '/api/check-update') {
       try {
         const gh = await getJson('https://api.github.com/repos/connoryang331/workpet/releases/latest');
         if (gh.status === 200 && gh.body) {
           const latestTag = String(gh.body.tag_name || '').trim();
-          const currentTag = 'v1.0.0';
+          const currentTag = 'v' + APP_VERSION;
           const hasUpdate = Boolean(latestTag && latestTag !== currentTag);
           return sendJson(res, 200, {
             ok: true,
@@ -1744,9 +1746,9 @@ const server = http.createServer(async (req, res) => {
             publishedAt: gh.body.published_at || '',
           });
         }
-        return sendJson(res, 200, { ok: true, hasUpdate: false, currentVersion: 'v1.0.0', error: 'GitHub API ' + gh.status });
+        return sendJson(res, 200, { ok: true, hasUpdate: false, currentVersion: 'v' + APP_VERSION, error: 'GitHub API ' + gh.status });
       } catch (err) {
-        return sendJson(res, 200, { ok: true, hasUpdate: false, currentVersion: 'v1.0.0', error: err.message });
+        return sendJson(res, 200, { ok: true, hasUpdate: false, currentVersion: 'v' + APP_VERSION, error: err.message });
       }
     }
     if (req.method === 'POST' && url.pathname === '/api/shutdown') {

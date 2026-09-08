@@ -7,7 +7,6 @@ import {
   RefreshCw,
   Save,
   User,
-  X,
   Zap,
   Minus,
 } from "lucide-react";
@@ -78,6 +77,8 @@ export default function Panel(p: PanelProps) {
   const dragRef = useRef<{ sx: number; sy: number; dragging: boolean } | null>(null);
 
   const [showPhone, setShowPhone] = useState<boolean | null>(null);
+  // Tab 是否显示文字（默认隐藏，仅图标）
+  const [tabShowText, setTabShowText] = useState<boolean | null>(null);
   // 每秒心跳，驱动倒计时走秒
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -86,6 +87,7 @@ export default function Panel(p: PanelProps) {
   }, []);
   useEffect(() => {
     getConfig().then((c) => setShowPhone(c.showPhone)).catch(() => {});
+    getConfig().then((c) => setTabShowText(c.tabShowText ?? false)).catch(() => {});
     getConfig().then((c) => setFontScale(c.fontScale || 1)).catch(() => {});
     getConfig().then((c) => setCbLaunch(c.cbLaunchOnStart)).catch(() => {});
     getConfig()
@@ -176,9 +178,6 @@ export default function Panel(p: PanelProps) {
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={p.onClose} title="缩到最小（收起面板，保留机器人）">
             <Minus className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={p.onHideToTray} title="隐藏到托盘">
-            <X className="h-4 w-4" />
-          </Button>
         </div>
       </div>
 
@@ -188,7 +187,7 @@ export default function Panel(p: PanelProps) {
           <Button
             key={key}
             variant="ghost"
-            size="sm"
+            size={tabShowText ? "sm" : "icon"}
             draggable
             onDragStart={() => {
               dragTabRef.current = key;
@@ -200,14 +199,17 @@ export default function Panel(p: PanelProps) {
             }}
             onClick={() => setTab(key)}
             className={cn(
-              "h-8 cursor-grab gap-1.5 rounded-lg px-3 text-xs font-medium active:cursor-grabbing",
+              tabShowText
+                ? "h-8 cursor-grab gap-1.5 rounded-lg px-3 text-xs font-medium active:cursor-grabbing"
+                : "h-8 w-8 cursor-grab rounded-lg active:cursor-grabbing",
               tab === key
                 ? "bg-primary text-primary-foreground hover:bg-primary"
                 : "text-foreground/70 hover:bg-muted hover:text-foreground"
             )}
-            title={`${label}（拖拽调整顺序）`}
+            title={tabShowText ? `${label}（拖拽调整顺序）` : `${label}（拖拽调整顺序；设置里可显示文字）`}
           >
-            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5" /> {label}
+            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5" />
+            {tabShowText && label}
           </Button>
         ))}
         <div className="ml-auto flex items-center gap-0.5">
@@ -275,6 +277,8 @@ export default function Panel(p: PanelProps) {
         <SettingsTab
           showPhone={showPhone}
           onShowPhoneChange={setShowPhone}
+          tabShowText={tabShowText}
+          onTabShowTextChange={setTabShowText}
           fontScale={fontScale}
           onFontScaleChange={setFontScale}
           cbLaunch={cbLaunch}
@@ -538,6 +542,8 @@ function BackupRestoreCard({ onRestored }: { onRestored?: () => void }) {
 function SettingsTab({
   showPhone,
   onShowPhoneChange,
+  tabShowText,
+  onTabShowTextChange,
   fontScale,
   onFontScaleChange,
   cbLaunch,
@@ -549,6 +555,8 @@ function SettingsTab({
 }: {
   showPhone: boolean | null;
   onShowPhoneChange: (v: boolean) => void;
+  tabShowText: boolean | null;
+  onTabShowTextChange: (v: boolean) => void;
   fontScale: number;
   onFontScaleChange: (v: number) => void;
   cbLaunch: boolean;
@@ -590,6 +598,13 @@ function SettingsTab({
     const next = !showPhone;
     onShowPhoneChange(next);
     saveConfig({ showPhone: next }).catch(() => onShowPhoneChange(!next));
+  };
+
+  const toggleTabShowText = () => {
+    if (tabShowText === null) return;
+    const next = !tabShowText;
+    onTabShowTextChange(next);
+    saveConfig({ tabShowText: next }).catch(() => onTabShowTextChange(!next));
   };
 
   const toggleWbLaunch = () => {
@@ -655,6 +670,22 @@ function SettingsTab({
             saveConfig({ fontScale: v }).catch(() => onFontScaleChange(fontScale));
           }}
           className="h-1 w-28 shrink-0 cursor-pointer appearance-none rounded-full accent-primary"
+        />
+      </div>
+
+      {/* 设置：Tab 显示文字（默认隐藏，仅图标） */}
+      <div className="flex items-center gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
+        <div className="flex min-w-0 flex-col">
+          <span className="text-xs font-medium">Tab 显示文字</span>
+          <span className="text-[10px] text-muted-foreground">
+            关=仅图标（默认，更紧凑）；开=图标+文字（WorkBuddy/CodeBuddy/TraeWork）
+          </span>
+        </div>
+        <Switch
+          checked={tabShowText ?? false}
+          disabled={tabShowText === null}
+          onCheckedChange={toggleTabShowText}
+          className="ml-auto shrink-0"
         />
       </div>
 
