@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { checkUpdate } from "@/api";
 import {
   Info,
   Settings,
@@ -7,7 +8,6 @@ import {
   RefreshCw,
   Save,
   User,
-  X,
   Zap,
   Minus,
 } from "lucide-react";
@@ -78,6 +78,8 @@ export default function Panel(p: PanelProps) {
   const dragRef = useRef<{ sx: number; sy: number; dragging: boolean } | null>(null);
 
   const [showPhone, setShowPhone] = useState<boolean | null>(null);
+  // Tab 是否显示文字（默认隐藏，仅图标）
+  const [tabShowText, setTabShowText] = useState<boolean | null>(null);
   // 每秒心跳，驱动倒计时走秒
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -86,6 +88,7 @@ export default function Panel(p: PanelProps) {
   }, []);
   useEffect(() => {
     getConfig().then((c) => setShowPhone(c.showPhone)).catch(() => {});
+    getConfig().then((c) => setTabShowText(c.tabShowText ?? false)).catch(() => {});
     getConfig().then((c) => setFontScale(c.fontScale || 1)).catch(() => {});
     getConfig().then((c) => setCbLaunch(c.cbLaunchOnStart)).catch(() => {});
     getConfig()
@@ -176,9 +179,6 @@ export default function Panel(p: PanelProps) {
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={p.onClose} title="缩到最小（收起面板，保留机器人）">
             <Minus className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={p.onHideToTray} title="隐藏到托盘">
-            <X className="h-4 w-4" />
-          </Button>
         </div>
       </div>
 
@@ -188,7 +188,7 @@ export default function Panel(p: PanelProps) {
           <Button
             key={key}
             variant="ghost"
-            size="sm"
+            size={tabShowText ? "sm" : "icon"}
             draggable
             onDragStart={() => {
               dragTabRef.current = key;
@@ -200,14 +200,17 @@ export default function Panel(p: PanelProps) {
             }}
             onClick={() => setTab(key)}
             className={cn(
-              "h-8 cursor-grab gap-1.5 rounded-lg px-3 text-xs font-medium active:cursor-grabbing",
+              tabShowText
+                ? "h-8 cursor-grab gap-1.5 rounded-lg px-3 text-xs font-medium active:cursor-grabbing"
+                : "h-8 w-8 cursor-grab rounded-lg active:cursor-grabbing",
               tab === key
                 ? "bg-primary text-primary-foreground hover:bg-primary"
                 : "text-foreground/70 hover:bg-muted hover:text-foreground"
             )}
-            title={`${label}（拖拽调整顺序）`}
+            title={tabShowText ? `${label}（拖拽调整顺序）` : `${label}（拖拽调整顺序；设置里可显示文字）`}
           >
-            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5" /> {label}
+            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5" />
+            {tabShowText && label}
           </Button>
         ))}
         <div className="ml-auto flex items-center gap-0.5">
@@ -275,6 +278,8 @@ export default function Panel(p: PanelProps) {
         <SettingsTab
           showPhone={showPhone}
           onShowPhoneChange={setShowPhone}
+          tabShowText={tabShowText}
+          onTabShowTextChange={setTabShowText}
           fontScale={fontScale}
           onFontScaleChange={setFontScale}
           cbLaunch={cbLaunch}
@@ -538,6 +543,8 @@ function BackupRestoreCard({ onRestored }: { onRestored?: () => void }) {
 function SettingsTab({
   showPhone,
   onShowPhoneChange,
+  tabShowText,
+  onTabShowTextChange,
   fontScale,
   onFontScaleChange,
   cbLaunch,
@@ -549,6 +556,8 @@ function SettingsTab({
 }: {
   showPhone: boolean | null;
   onShowPhoneChange: (v: boolean) => void;
+  tabShowText: boolean | null;
+  onTabShowTextChange: (v: boolean) => void;
   fontScale: number;
   onFontScaleChange: (v: number) => void;
   cbLaunch: boolean;
@@ -590,6 +599,13 @@ function SettingsTab({
     const next = !showPhone;
     onShowPhoneChange(next);
     saveConfig({ showPhone: next }).catch(() => onShowPhoneChange(!next));
+  };
+
+  const toggleTabShowText = () => {
+    if (tabShowText === null) return;
+    const next = !tabShowText;
+    onTabShowTextChange(next);
+    saveConfig({ tabShowText: next }).catch(() => onTabShowTextChange(!next));
   };
 
   const toggleWbLaunch = () => {
@@ -655,6 +671,22 @@ function SettingsTab({
             saveConfig({ fontScale: v }).catch(() => onFontScaleChange(fontScale));
           }}
           className="h-1 w-28 shrink-0 cursor-pointer appearance-none rounded-full accent-primary"
+        />
+      </div>
+
+      {/* 设置：Tab 显示文字（默认隐藏，仅图标） */}
+      <div className="flex items-center gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
+        <div className="flex min-w-0 flex-col">
+          <span className="text-xs font-medium">Tab 显示文字</span>
+          <span className="text-[10px] text-muted-foreground">
+            关=仅图标（默认，更紧凑）；开=图标+文字（WorkBuddy/CodeBuddy/TraeWork）
+          </span>
+        </div>
+        <Switch
+          checked={tabShowText ?? false}
+          disabled={tabShowText === null}
+          onCheckedChange={toggleTabShowText}
+          className="ml-auto shrink-0"
         />
       </div>
 
@@ -751,6 +783,23 @@ function SettingsTab({
 /* ---------------- 关于 Tab ---------------- */
 
 function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
+  const [checkMsg, setCheckMsg] = useState<string | null>(null);
+  // 每次打开「关于」页都重新向 daemon 检查一次更新（失败静默，不打扰）
+  useEffect(() => {
+    let stop = false;
+    checkUpdate()
+      .then((info) => {
+        if (stop) return;
+        setCheckMsg(info && info.hasUpdate ? `发现新版 ${info.latestVersion}` : "已是最新版本");
+      })
+      .catch(() => {
+        if (!stop) setCheckMsg("检查更新失败（可稍后重试）");
+      });
+    return () => {
+      stop = true;
+    };
+  }, []);
+
   return (
     <ScrollArea className="h-full w-full pr-1">
       <div className="flex flex-col items-center justify-center gap-2.5 px-2 py-1 text-center">
@@ -763,7 +812,7 @@ function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
               发现新版 {updateInfo.latestVersion}
             </Badge>
           ) : (
-            <span className="text-[10px] text-muted-foreground/60">(最新)</span>
+            <span className="text-[10px] text-muted-foreground/60">{checkMsg ?? "(检查中…)"}</span>
           )}
         </div>
 
@@ -781,7 +830,7 @@ function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
               size="sm"
               className="mt-1 h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3"
               onClick={() => {
-                invoke("open_external", { url: updateInfo.url || "https://github.com/connoryang331/work-pet/releases/latest" }).catch(() => {});
+                invoke("open_external", { url: updateInfo.url || "https://github.com/connoryang331/workpet/releases/latest" }).catch(() => {});
               }}
             >
               前往下载更新
@@ -796,18 +845,18 @@ function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
         </p>
 
         <a
-          href="https://github.com/connoryang331/work-pet"
+          href="https://github.com/connoryang331/workpet"
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => {
             e.preventDefault();
-            invoke("open_external", { url: "https://github.com/connoryang331/work-pet" }).catch(() => {});
+            invoke("open_external", { url: "https://github.com/connoryang331/workpet" }).catch(() => {});
           }}
           className="flex items-center gap-1.5 rounded-full border border-border bg-muted/60 px-3 py-1 text-[10px] text-muted-foreground hover:text-foreground"
           title="GitHub 仓库"
         >
           <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.66-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .3z"/></svg>
-          github.com/connoryang331/work-pet
+          github.com/connoryang331/workpet
         </a>
 
         {/* 打赏支持 */}

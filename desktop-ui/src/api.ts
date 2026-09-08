@@ -194,6 +194,8 @@ export interface PetConfig {
   cbLaunchOnStart: boolean;
   /// 隐藏桌面宠物（隐藏后收起面板即整窗隐藏到托盘）
   hidePet: boolean;
+  /// 主 Tab 是否显示文字（默认隐藏，仅图标）
+  tabShowText: boolean;
   /// 主 Tab 顺序（accounts=TraeWork / wb=WorkBuddy / cb=CodeBuddy）
   tabOrder: string[];
 }
@@ -206,6 +208,7 @@ export function getConfig(): Promise<PetConfig> {
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
     hidePet: Boolean(v?.hidePet),
+    tabShowText: Boolean(v?.tabShowText),
     tabOrder: Array.isArray(v?.tabOrder) ? v.tabOrder.map(String) : [],
   }));
 }
@@ -218,6 +221,7 @@ export function saveConfig(patch: Partial<PetConfig>): Promise<PetConfig> {
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
     hidePet: Boolean(v?.hidePet),
+    tabShowText: Boolean(v?.tabShowText),
     tabOrder: Array.isArray(v?.tabOrder) ? v.tabOrder.map(String) : [],
   }));
 }

@@ -1,12 +1,12 @@
 [package]
-name = "work-pet"
-version = "1.0.0"
+name = "workpet"
+version = "1.0.1"
 edition = "2021"
 description = "Work Pet · TraeWork + WorkBuddy + CodeBuddy 联合签到宠物"
 license = "MIT"
 
 [lib]
-name = "work_pet_lib"
+name = "workpet_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
