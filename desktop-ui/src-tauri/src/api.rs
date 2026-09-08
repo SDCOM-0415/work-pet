@@ -201,7 +201,6 @@ fn find_node() -> String {
             v.push(dir.join("binaries").join("node.exe"));
 
             // macOS .app：Tauri resources 位于 Contents/Resources。
-            // 主程序位于 Contents/MacOS/work-pet，因此需要显式检查相邻 Resources 目录。
             if cfg!(target_os = "macos") {
                 if let Some(contents_dir) = dir.parent() {
                     let resources = contents_dir.join("Resources");
@@ -210,7 +209,7 @@ fn find_node() -> String {
                 }
             }
 
-            // 开发环境：从 exe 目录向上找 binaries/node
+            // 开发环境：从 exe 目录向上找 binaries/node(.exe)
             let mut d = dir.to_path_buf();
             for _ in 0..5 {
                 v.push(d.join("binaries").join("node"));
@@ -231,14 +230,9 @@ fn find_node() -> String {
     if let Ok(la) = std::env::var("LOCALAPPDATA") {
         v.push(Path::new(&la).join("Programs").join("nodejs").join("node.exe"));
     }
-    // macOS：检查 AppContents/Resources 及系统路径
     if cfg!(target_os = "macos") {
-        if let Ok(home) = std::env::var("HOME") {
-            v.push(Path::new(&home).join(".nvm/versions/node/latest/bin/node").to_path_buf());
-            v.push(Path::new(&home).join(".volta/bin/node").to_path_buf());
-        }
-        v.push(Path::new("/usr/local/bin/node").to_path_buf());
         v.push(Path::new("/opt/homebrew/bin/node").to_path_buf());
+        v.push(Path::new("/usr/local/bin/node").to_path_buf());
         v.push(Path::new("/usr/bin/node").to_path_buf());
     }
     for p in &v {
@@ -261,7 +255,7 @@ fn spawn_daemon() -> Result<(), String> {
 
     let mut cmd = std::process::Command::new(node);
     cmd.arg(&daemon);
-    // 数据目录：Windows 保持便携模式；macOS 不写 .app 包，使用 Application Support。
+    // Windows 保持原有便携数据目录；macOS 使用标准 Application Support，避免写 .app Bundle。
     #[cfg(target_os = "macos")]
     if let Ok(home) = std::env::var("HOME") {
         let data_dir = Path::new(&home)

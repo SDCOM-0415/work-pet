@@ -1,10 +1,8 @@
-name: Build WorkPet
+name: build
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -14,74 +12,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
 
-      - name: Prepare bundled runtime and JS resources
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-ui/src-tauri
+
+      - name: Bundle Node.js runtime and scripts (flat packaging)
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "desktop-ui/src-tauri/binaries" | Out-Null
-          Copy-Item "daemon.js" "desktop-ui/src-tauri/daemon.js" -Force
-          Copy-Item "credit-segments.js" "desktop-ui/src-tauri/credit-segments.js" -Force
+          New-Item -ItemType Directory -Force -Path desktop-ui/src-tauri/binaries | Out-Null
+          Copy-Item "C:/Program Files/nodejs/node.exe" desktop-ui/src-tauri/binaries/node.exe
+          Copy-Item "daemon.js" desktop-ui/src-tauri/daemon.js
+          Copy-Item "credit-segments.js" desktop-ui/src-tauri/credit-segments.js
 
-          $node = (Get-Command node.exe).Source
-          Copy-Item $node "desktop-ui/src-tauri/binaries/node.exe" -Force
-
-          Write-Host "=== Bundled resources ==="
-          Get-Item "desktop-ui/src-tauri/daemon.js"
-          Get-Item "desktop-ui/src-tauri/credit-segments.js"
-          Get-Item "desktop-ui/src-tauri/binaries/node.exe"
-          & "desktop-ui/src-tauri/binaries/node.exe" --version
-
-      - name: Install frontend deps
+      - name: Install dependencies
         working-directory: desktop-ui
-        run: npm ci
+        run: npm install
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache Rust deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            desktop-ui/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('desktop-ui/src-tauri/Cargo.lock') }}
-
-      - name: Build Tauri app (Windows)
+      - name: Build (NSIS installer)
         working-directory: desktop-ui
         run: npx tauri build
 
-      - name: Upload Windows artifact
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: WorkPet-windows-x64
-          path: desktop-ui/src-tauri/target/release/bundle/nsis/*.exe
+          name: workpet-windows
+          path: |
+            desktop-ui/src-tauri/target/release/workpet.exe
+            desktop-ui/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
-          retention-days: 7
 
   build-macos:
-    name: Build (macOS universal)
+    name: Build (macOS Universal 2)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
 
-      - name: Prepare Universal Node runtime and JS resources
+      - name: Prepare Universal Node.js runtime and scripts
         shell: bash
         run: |
           set -euo pipefail
-
           ROOT="$GITHUB_WORKSPACE"
           TAURI_DIR="$ROOT/desktop-ui/src-tauri"
           BIN_DIR="$TAURI_DIR/binaries"
@@ -94,7 +73,6 @@ jobs:
           TMP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TMP_DIR"' EXIT
 
-          echo "Preparing Node ${NODE_VERSION} as a Universal 2 runtime"
           curl --fail --location --retry 3 \
             "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-darwin-x64.tar.gz" \
             -o "$TMP_DIR/node-x64.tar.gz"
@@ -107,40 +85,28 @@ jobs:
 
           X64_NODE="$TMP_DIR/node-${NODE_VERSION}-darwin-x64/bin/node"
           ARM64_NODE="$TMP_DIR/node-${NODE_VERSION}-darwin-arm64/bin/node"
-
           lipo -create "$X64_NODE" "$ARM64_NODE" -output "$BIN_DIR/node"
           chmod +x "$BIN_DIR/node"
-
-          # lipo invalidates the original per-architecture signatures.
-          # An ad-hoc signature is sufficient for unsigned CI artifacts.
           codesign --force --sign - "$BIN_DIR/node"
 
-          echo "=== Bundled resources ==="
-          ls -lh "$TAURI_DIR/daemon.js" "$TAURI_DIR/credit-segments.js" "$BIN_DIR/node"
+          echo "=== Bundled Node ==="
           file "$BIN_DIR/node"
           lipo -info "$BIN_DIR/node"
           "$BIN_DIR/node" --version
 
-      - name: Install frontend deps
+      - name: Install dependencies
         working-directory: desktop-ui
-        run: npm ci
+        run: npm install
 
-      - name: Install Rust stable (both macOS targets)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          workspaces: desktop-ui/src-tauri
+          key: macos-universal
 
-      - name: Cache Rust deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            desktop-ui/src-tauri/target/
-          key: ${{ runner.os }}-macos-universal-cargo-${{ hashFiles('desktop-ui/src-tauri/Cargo.lock') }}
-
-      - name: Build universal macOS app
+      - name: Build Universal 2 app and DMG
         working-directory: desktop-ui
         run: npx tauri build --target universal-apple-darwin --bundles app,dmg
 
@@ -149,33 +115,96 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/WorkPet.app"
-          BIN="$APP/Contents/MacOS/work-pet"
-          NODE="$APP/Contents/Resources/binaries/node"
+          BASE="src-tauri/target/universal-apple-darwin/release/bundle"
+          APP="$BASE/macos/WorkPet.app"
+          MAIN="$APP/Contents/MacOS/work-pet"
 
           echo "=== WorkPet executable ==="
-          file "$BIN"
-          lipo -info "$BIN"
+          test -f "$MAIN"
+          file "$MAIN"
+          lipo -info "$MAIN"
+          lipo -verify_arch x86_64 arm64 "$MAIN"
 
+          NODE=""
+          for p in \
+            "$APP/Contents/Resources/binaries/node" \
+            "$APP/Contents/Resources/node"; do
+            if [ -f "$p" ]; then NODE="$p"; break; fi
+          done
+          test -n "$NODE"
           echo "=== Bundled Node ==="
-          test -x "$NODE"
           file "$NODE"
           lipo -info "$NODE"
+          lipo -verify_arch x86_64 arm64 "$NODE"
           "$NODE" --version
 
-          echo "=== JS resources ==="
-          test -f "$APP/Contents/Resources/daemon.js"
-          test -f "$APP/Contents/Resources/credit-segments.js"
-          ls -lh "$APP/Contents/Resources/daemon.js" \
-                 "$APP/Contents/Resources/credit-segments.js"
+          echo "=== Bundled scripts ==="
+          find "$APP/Contents/Resources" -maxdepth 3 -type f \( -name daemon.js -o -name credit-segments.js \) -print
+          find "$APP/Contents/Resources" -type f -name daemon.js | grep -q .
+          find "$APP/Contents/Resources" -type f -name credit-segments.js | grep -q .
 
           echo "=== DMG ==="
-          ls -lh src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          ls -lh "$BASE/dmg/"*.dmg
 
-      - name: Upload macOS universal DMG
+      - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WorkPet-macos-universal
+          name: workpet-macos-universal
           path: desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
-          retention-days: 7
+
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-macos]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: workpet-windows
+          path: artifacts/windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: workpet-macos-universal
+          path: artifacts/macos
+
+      - name: Publish release (tag = version from tauri.conf.json)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VER="$(node -p "require('./desktop-ui/src-tauri/tauri.conf.json').version")"
+          TAG="v${VER}"
+          INSTALLER="$(find artifacts/windows -type f -name '*.exe' | grep -E 'setup|installer' | head -n 1 || true)"
+          if [ -z "$INSTALLER" ]; then
+            INSTALLER="$(find artifacts/windows -type f -name '*.exe' | head -n 1)"
+          fi
+          DMG="$(find artifacts/macos -type f -name '*.dmg' | head -n 1)"
+
+          cp "$INSTALLER" "WorkPet_${VER}_x64-setup.exe"
+          cp "$DMG" "WorkPet_${VER}_universal.dmg"
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              "WorkPet_${VER}_x64-setup.exe" \
+              "WorkPet_${VER}_universal.dmg" \
+              --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "$TAG" \
+              "WorkPet_${VER}_x64-setup.exe" \
+              "WorkPet_${VER}_universal.dmg" \
+              --repo "${{ github.repository }}" \
+              --title "WorkPet $VER" \
+              --notes "WorkPet $VER 自动构建"
+          fi

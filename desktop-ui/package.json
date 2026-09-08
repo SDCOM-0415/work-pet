@@ -1,7 +1,7 @@
 {
-  "name": "work-pet-ui",
+  "name": "workpet-ui",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:mac-universal": "tauri build --target universal-apple-darwin"
+    "tauri:build:mac-universal": "tauri build --target universal-apple-darwin --bundles app,dmg"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
