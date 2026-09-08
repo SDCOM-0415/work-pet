@@ -23,6 +23,7 @@ import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
 import traeworkIcon from "@/assets/traework.png";
 import workbuddyIcon from "@/assets/workbuddy.png";
 import codebuddyIcon from "@/assets/codebuddy.png";
+import autoclawIcon from "@/assets/autoclaw.png";
 import rewardQR from "@/assets/buy-me-token.png";
 import type { Account, Entitlement, Status, UpdateInfo } from "@/types";
 import { fmtCredits } from "@/api";
@@ -54,12 +55,13 @@ interface PanelProps {
   updateInfo?: UpdateInfo | null;
 }
 
-type Tab = "accounts" | "wb" | "cb" | "settings" | "about";
+type Tab = "tw" | "wb" | "cb" | "ac" | "settings" | "about";
 
 const MAIN_TABS: { key: Tab; label: string; img: string }[] = [
   { key: "wb", label: "WorkBuddy", img: workbuddyIcon },
   { key: "cb", label: "CodeBuddy", img: codebuddyIcon },
-  { key: "accounts", label: "TraeWork", img: traeworkIcon },
+  { key: "ac", label: "AutoClaw", img: autoclawIcon },
+  { key: "tw", label: "TraeWork", img: traeworkIcon },
 ];
 const ICON_TABS: { key: Tab; label: string; icon: typeof User }[] = [
   { key: "settings", label: "设置", icon: Settings },
@@ -68,10 +70,11 @@ const ICON_TABS: { key: Tab; label: string; icon: typeof User }[] = [
 
 export default function Panel(p: PanelProps) {
   const [tab, setTab] = useState<Tab>("wb");
-  const [tabOrder, setTabOrder] = useState<Tab[]>(["wb", "cb", "accounts"]);
+  const [tabOrder, setTabOrder] = useState<Tab[]>(["wb", "cb", "ac", "tw"]);
   const dragTabRef = useRef<Tab | null>(null);
   const [fontScale, setFontScale] = useState<number>(1);
   const [cbLaunch, setCbLaunch] = useState<boolean>(false);
+  const [acLaunch, setAcLaunch] = useState<boolean>(false);
   const [hidePetState, setHidePetState] = useState<boolean | null>(null);
   const [wbRefreshTick, setWbRefreshTick] = useState(0); // 100% 基准 = 原 115% 渲染大小
   // 标题栏拖动窗口（与宠物卡片拖动同款逻辑）
@@ -93,8 +96,9 @@ export default function Panel(p: PanelProps) {
     getConfig().then((c) => setCbLaunch(c.cbLaunchOnStart)).catch(() => {});
     getConfig()
       .then((c) => {
-        const known: Tab[] = ["accounts", "wb", "cb"];
-        const arr = (c.tabOrder ?? []).filter((t): t is Tab => known.includes(t as Tab));
+        const known: Tab[] = ["tw", "wb", "cb", "ac"];
+        const mapped = (c.tabOrder ?? []).map((t) => (t === "accounts" ? "tw" : t));
+        const arr = mapped.filter((t): t is Tab => known.includes(t as Tab));
         const uniq = Array.from(new Set(arr));
         if (uniq.length === known.length) setTabOrder(uniq);
       })
@@ -116,7 +120,7 @@ export default function Panel(p: PanelProps) {
     dragTabRef.current = null;
     if (!from || from === target) return;
     setTabOrder((prev) => {
-      const known: Tab[] = ["accounts", "wb", "cb"];
+      const known: Tab[] = ["tw", "wb", "cb", "ac"];
       const head = prev.filter((t) => known.includes(t));
       const arr = head.concat(known.filter((t) => !head.includes(t)));
       const fromIdx = arr.indexOf(from);
@@ -154,7 +158,7 @@ export default function Panel(p: PanelProps) {
         style={{ cursor: "grab" }}
       >
         <span className="text-base font-bold">Work Pet</span>
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={p.onClaimAll} title="全部签到（TraeWork + WorkBuddy + CodeBuddy）">
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={p.onClaimAll} title="全部签到（TraeWork + WorkBuddy + CodeBuddy + AutoClaw）">
           <Zap className="h-4 w-4" />
         </Button>
         <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={p.onBackup} title="备份所有账号（单文件导出）">
@@ -250,10 +254,10 @@ export default function Panel(p: PanelProps) {
         <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 读取签到状态…
         </div>
-      ) : tab === "accounts" ? (
+      ) : tab === "tw" ? (
         <AccountsTab p={p} checked={checked} />
-      ) : tab === "wb" || tab === "cb" ? (
-        /* WorkBuddy / CodeBuddy 常驻挂载，切 Tab 不重新拉数据 */
+      ) : tab === "wb" || tab === "cb" || tab === "ac" ? (
+        /* WorkBuddy / CodeBuddy / AutoClaw 常驻挂载，切 Tab 不重新拉数据 */
         <>
           <div className={cn("min-h-0 flex-1 flex-col", tab === "wb" ? "flex" : "hidden")}>
             <WorkBuddyTab
@@ -273,6 +277,15 @@ export default function Panel(p: PanelProps) {
               onLaunchCli={() => invoke("launch_codebuddy_cli").then(() => undefined)}
             />
           </div>
+          <div className={cn("min-h-0 flex-1 flex-col", tab === "ac" ? "flex" : "hidden")}>
+            <WorkBuddyTab
+              showPhone={!!showPhone}
+              kind="ac"
+              label="AutoClaw"
+              refreshTick={wbRefreshTick}
+              onLaunch={(force) => invoke("launch_autoclaw", { force: force ?? false }).then(() => undefined)}
+            />
+          </div>
         </>
       ) : tab === "settings" ? (
         <SettingsTab
@@ -284,6 +297,8 @@ export default function Panel(p: PanelProps) {
           onFontScaleChange={setFontScale}
           cbLaunch={cbLaunch}
           onCbLaunchChange={setCbLaunch}
+          acLaunch={acLaunch}
+          onAcLaunchChange={setAcLaunch}
           hidePet={p.hidePet}
           hidePetState={hidePetState}
           onHidePetChange={(v) => {
@@ -549,6 +564,8 @@ function SettingsTab({
   onFontScaleChange,
   cbLaunch,
   onCbLaunchChange,
+  acLaunch,
+  onAcLaunchChange,
   hidePet,
   hidePetState,
   onHidePetChange,
@@ -562,6 +579,8 @@ function SettingsTab({
   onFontScaleChange: (v: number) => void;
   cbLaunch: boolean;
   onCbLaunchChange: (v: boolean) => void;
+  acLaunch: boolean;
+  onAcLaunchChange: (v: boolean) => void;
   hidePet: boolean;
   hidePetState: boolean | null;
   onHidePetChange: (v: boolean) => void;
@@ -613,6 +632,12 @@ function SettingsTab({
     const next = !wbLaunch;
     setWbLaunch(next);
     saveConfig({ wbLaunchOnStart: next }).catch(() => setWbLaunch(!next));
+  };
+
+  const toggleAcLaunch = () => {
+    const next = !acLaunch;
+    onAcLaunchChange(next);
+    saveConfig({ acLaunchOnStart: next }).catch(() => onAcLaunchChange(!next));
   };
 
   const toggleAutoStart = () => {
@@ -749,6 +774,21 @@ function SettingsTab({
           checked={wbLaunch ?? false}
           disabled={wbLaunch === null}
           onCheckedChange={toggleWbLaunch}
+          className="ml-auto shrink-0"
+        />
+      </div>
+
+      {/* 设置：打开 Pet 时启动 AutoClaw */}
+      <div className="flex items-center gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
+        <div className="flex min-w-0 flex-col">
+          <span className="text-xs font-medium">打开 Pet 时同时启动 AutoClaw</span>
+          <span className="text-[10px] text-muted-foreground">
+            拉起 AutoClaw 客户端（签到无需运行 AutoClaw）
+          </span>
+        </div>
+        <Switch
+          checked={acLaunch}
+          onCheckedChange={toggleAcLaunch}
           className="ml-auto shrink-0"
         />
       </div>

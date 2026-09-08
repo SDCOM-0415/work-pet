@@ -151,6 +151,81 @@ fn launch_codebuddy_cli() -> Result<(), String> {
     Err("仅支持 Windows".to_string())
 }
 
+/// 以 CDP 模式拉起 AutoClaw 客户端（端口 9226）。
+/// 已开 CDP 端口 → 直接返回；正在运行但没开端口 → 优雅关闭后带 CDP 重启；
+/// 未安装 → 返回错误。AutoClaw 是 Electron，`--remote-debugging-port` 原生支持。
+#[tauri::command]
+async fn launch_autoclaw(force: Option<bool>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        for (env, sub) in [
+            ("LOCALAPPDATA", r"Programs\AutoClaw\AutoClaw.exe"),
+            ("ProgramFiles", r"AutoClaw\AutoClaw.exe"),
+            ("ProgramFiles(x86)", r"AutoClaw\AutoClaw.exe"),
+            ("APPDATA", r"AutoClaw\AutoClaw.exe"),
+        ] {
+            if let Ok(v) = std::env::var(env) {
+                candidates.push(Path::new(&v).join(sub));
+            }
+        }
+        candidates.push(PathBuf::from(r"D:\Program Files\AutoClaw\AutoClaw.exe"));
+        let exe = candidates.into_iter().find(|c| c.is_file()).ok_or("未找到 AutoClaw.exe")?;
+
+        let cdp_ok = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:9226/json/version).StatusCode -eq 200 } catch { $false }",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("True"))
+            .unwrap_or(false);
+        if cdp_ok {
+            return Ok(());
+        }
+
+        let running = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq AutoClaw.exe", "/FO", "CSV"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("AutoClaw.exe"))
+            .unwrap_or(false);
+        if running && !force.unwrap_or(false) {
+            return Err("AC_RUNNING_NO_CDP".to_string());
+        }
+        if running {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/IM", "AutoClaw.exe"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            let still = std::process::Command::new("tasklist")
+                .args(["/FI", "IMAGENAME eq AutoClaw.exe", "/FO", "CSV"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("AutoClaw.exe"))
+                .unwrap_or(false);
+            if still {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/IM", "AutoClaw.exe", "/F", "/T"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        }
+        std::process::Command::new(&exe)
+            .arg("--remote-debugging-port=9226")
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("启动 AutoClaw 失败: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    Err("仅支持 Windows".to_string())
+}
+
 /// 查询 daemon 自举是否完成（前端启动时轮询，避免错过一次性事件）。
 #[tauri::command]
 fn daemon_ready(state: tauri::State<BootstrapState>) -> Option<Result<(), String>> {
@@ -546,6 +621,7 @@ pub fn run() {
             launch_workbuddy,
             launch_codebuddy,
             launch_codebuddy_cli,
+            launch_autoclaw,
             daemon_ready,
             set_panel_open,
             set_window_visible,

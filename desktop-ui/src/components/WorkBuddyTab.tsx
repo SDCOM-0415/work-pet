@@ -87,6 +87,9 @@ export default function WorkBuddyTab({
       if (msg.includes("CB_RUNNING_NO_CDP")) {
         setRestartArmed(true);
         setLaunchMsg("CodeBuddy 正在运行（未开调试端口）。再点一次「确认重启」将关闭它并以注入模式重启。");
+      } else if (msg.includes("AC_RUNNING_NO_CDP")) {
+        setRestartArmed(true);
+        setLaunchMsg("AutoClaw 正在运行（未开调试端口）。再点一次「确认重启」将关闭它并以注入模式重启。");
       } else {
         setLaunchMsg(msg);
       }
