@@ -17,6 +17,7 @@ import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import robotIcon from "@/assets/robot.png";
 import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import { getConfig, saveConfig, exportAllAccounts, importBackup } from "@/api";
 import WorkBuddyTab from "@/components/WorkBuddyTab";
 import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
@@ -624,23 +625,21 @@ function SettingsTab({
       .catch(() => setWbLaunch(false));
   }, []);
 
+  // 开关统一「始终可点」：配置未加载完成时按默认值（false）处理，避免禁用/禁止光标
   const toggleShowPhone = () => {
-    if (showPhone === null) return;
-    const next = !showPhone;
+    const next = !(showPhone ?? false);
     onShowPhoneChange(next);
     saveConfig({ showPhone: next }).catch(() => onShowPhoneChange(!next));
   };
 
   const toggleTabShowText = () => {
-    if (tabShowText === null) return;
-    const next = !tabShowText;
+    const next = !(tabShowText ?? false);
     onTabShowTextChange(next);
     saveConfig({ tabShowText: next }).catch(() => onTabShowTextChange(!next));
   };
 
   const toggleWbLaunch = () => {
-    if (wbLaunch === null) return;
-    const next = !wbLaunch;
+    const next = !(wbLaunch ?? false);
     setWbLaunch(next);
     saveConfig({ wbLaunchOnStart: next }).catch(() => setWbLaunch(!next));
   };
@@ -652,15 +651,13 @@ function SettingsTab({
   };
 
   const toggleAutoStart = () => {
-    if (autoStart === null) return;
-    const next = !autoStart;
+    const next = !(autoStart ?? false);
     setAutoStart(next);
     invoke("set_autostart", { enable: next }).catch(() => setAutoStart(!next));
   };
 
   const toggleLaunchHost = () => {
-    if (launchHost === null) return;
-    const next = !launchHost;
+    const next = !(launchHost ?? false);
     setLaunchHost(next);
     setSaveErr(false);
     saveConfig({ launchHostOnStart: next }).catch(() => {
@@ -680,7 +677,6 @@ function SettingsTab({
         </div>
         <Switch
           checked={autoStart ?? false}
-          disabled={autoStart === null}
           onCheckedChange={toggleAutoStart}
           className="ml-auto shrink-0"
         />
@@ -695,18 +691,17 @@ function SettingsTab({
         <span className="ml-auto shrink-0 font-mono text-xs tabular-nums">
           {Math.round(fontScale * 100)}%
         </span>
-        <input
-          type="range"
+        <Slider
           min={0.85}
           max={1.25}
           step={0.05}
-          value={fontScale}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            onFontScaleChange(v);
-            saveConfig({ fontScale: v }).catch(() => onFontScaleChange(fontScale));
+          value={[fontScale]}
+          onValueChange={(v) => {
+            const n = Number(v[0]);
+            onFontScaleChange(n);
+            saveConfig({ fontScale: n }).catch(() => onFontScaleChange(fontScale));
           }}
-          className="h-1 w-28 shrink-0 cursor-pointer appearance-none rounded-full accent-primary"
+          className="w-28 shrink-0"
         />
       </div>
 
@@ -720,7 +715,6 @@ function SettingsTab({
         </div>
         <Switch
           checked={tabShowText ?? false}
-          disabled={tabShowText === null}
           onCheckedChange={toggleTabShowText}
           className="ml-auto shrink-0"
         />
@@ -736,7 +730,6 @@ function SettingsTab({
         </div>
         <Switch
           checked={showPhone ?? false}
-          disabled={showPhone === null}
           onCheckedChange={toggleShowPhone}
           className="ml-auto shrink-0"
         />
@@ -752,7 +745,6 @@ function SettingsTab({
         </div>
         <Switch
           checked={hidePetState ?? hidePet}
-          disabled={hidePetState === null}
           onCheckedChange={toggleHidePet}
           className="ml-auto shrink-0"
         />
@@ -783,7 +775,6 @@ function SettingsTab({
         </div>
         <Switch
           checked={wbLaunch ?? false}
-          disabled={wbLaunch === null}
           onCheckedChange={toggleWbLaunch}
           className="ml-auto shrink-0"
         />
@@ -814,7 +805,6 @@ function SettingsTab({
         </div>
         <Switch
           checked={launchHost ?? false}
-          disabled={launchHost === null}
           onCheckedChange={toggleLaunchHost}
           className="ml-auto shrink-0"
         />
