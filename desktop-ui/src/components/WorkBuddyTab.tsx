@@ -29,6 +29,7 @@ export default function WorkBuddyTab({
   onLaunch,
   onLaunchCli,
   refreshTick = 0,
+  active = false,
 }: {
   showPhone: boolean;
   kind?: ClientKind;
@@ -36,6 +37,8 @@ export default function WorkBuddyTab({
   onLaunch?: (force?: boolean) => Promise<void> | void;
   onLaunchCli?: () => Promise<void> | void;
   refreshTick?: number;
+  /// 当前 Tab 是否被选中：切到时静默刷新积分（不清空页面、不显示加载态）
+  active?: boolean;
 }) {
   const [accounts, setAccounts] = useState<ClientAccount[] | null>(null);
   const [currentUid, setCurrentUid] = useState<string | null>(null);
@@ -167,6 +170,12 @@ export default function WorkBuddyTab({
     void loadCredits(accounts);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountsKey]);
+
+  // 切到本 Tab 时静默刷新积分：不重新拉账号列表、不显示加载态，旧积分先保持显示，新的到了直接替换
+  useEffect(() => {
+    if (active && accountsRef.current) void loadCredits(accountsRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const doDelete = async (uid: string) => {
     const key = `del:${uid}`;

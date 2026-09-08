@@ -281,6 +281,7 @@ export default function Panel(p: PanelProps) {
               showPhone={!!showPhone}
               kind="wb"
               refreshTick={wbRefreshTick}
+              active={tab === "wb"}
               onLaunch={(force) => invoke("launch_workbuddy", { force: force ?? false }).then(() => undefined)}
             />
           </div>
@@ -290,6 +291,7 @@ export default function Panel(p: PanelProps) {
               kind="cb"
               label="CodeBuddy"
               refreshTick={wbRefreshTick}
+              active={tab === "cb"}
               onLaunch={(force) => invoke("launch_codebuddy", { force: force ?? false }).then(() => undefined)}
               onLaunchCli={() => invoke("launch_codebuddy_cli").then(() => undefined)}
             />
@@ -300,6 +302,7 @@ export default function Panel(p: PanelProps) {
               kind="ac"
               label="AutoClaw"
               refreshTick={wbRefreshTick}
+              active={tab === "ac"}
               onLaunch={(force) => invoke("launch_autoclaw", { force: force ?? false }).then(() => undefined)}
             />
           </div>
