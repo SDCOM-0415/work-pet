@@ -89,21 +89,38 @@ export default function Panel(p: PanelProps) {
     const t = window.setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
+  // 配置加载：daemon 自举是异步的，挂载时第一次请求可能失败（设置开关会一直禁用/悬停禁止图标）。
+  // 失败则每秒重试，直到拿到配置（上限 ~20s）；成功后一次写入全部设置。
   useEffect(() => {
-    getConfig().then((c) => setShowPhone(c.showPhone)).catch(() => {});
-    getConfig().then((c) => setTabShowText(c.tabShowText ?? false)).catch(() => {});
-    getConfig().then((c) => setFontScale(c.fontScale || 1)).catch(() => {});
-    getConfig().then((c) => setCbLaunch(c.cbLaunchOnStart)).catch(() => {});
-    getConfig()
-      .then((c) => {
-        const known: Tab[] = ["tw", "wb", "cb", "ac"];
-        const mapped = (c.tabOrder ?? []).map((t) => (t === "accounts" ? "tw" : t));
-        const arr = mapped.filter((t): t is Tab => known.includes(t as Tab));
-        const uniq = Array.from(new Set(arr));
-        if (uniq.length === known.length) setTabOrder(uniq);
-      })
-      .catch(() => {});
-    getConfig().then((c) => setHidePetState(c.hidePet)).catch(() => {});
+    let stop = false;
+    const apply = (c: Awaited<ReturnType<typeof getConfig>>) => {
+      setShowPhone(c.showPhone);
+      setTabShowText(c.tabShowText ?? false);
+      setFontScale(c.fontScale || 1);
+      setCbLaunch(c.cbLaunchOnStart);
+      setAcLaunch(c.acLaunchOnStart);
+      setHidePetState(c.hidePet);
+      const known: Tab[] = ["tw", "wb", "cb", "ac"];
+      const mapped = (c.tabOrder ?? []).map((t) => (t === "accounts" ? "tw" : t));
+      const arr = mapped.filter((t): t is Tab => known.includes(t as Tab));
+      const uniq = Array.from(new Set(arr));
+      if (uniq.length === known.length) setTabOrder(uniq);
+    };
+    const load = async () => {
+      for (let i = 0; i < 20 && !stop; i++) {
+        try {
+          const c = await getConfig();
+          if (!stop) apply(c);
+          return;
+        } catch {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+    };
+    void load();
+    return () => {
+      stop = true;
+    };
   }, []);
 
   const checked = p.status?.checked_in ?? false;
