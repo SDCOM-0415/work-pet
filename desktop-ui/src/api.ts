@@ -192,11 +192,13 @@ export interface PetConfig {
   fontScale: number;
   /// 打开 Pet 时同时启动 CodeBuddy（CDP 注入，默认 false）
   cbLaunchOnStart: boolean;
+  /// 打开 Pet 时同时启动 AutoClaw（默认 false）
+  acLaunchOnStart: boolean;
   /// 隐藏桌面宠物（隐藏后收起面板即整窗隐藏到托盘）
   hidePet: boolean;
   /// 主 Tab 是否显示文字（默认隐藏，仅图标）
   tabShowText: boolean;
-  /// 主 Tab 顺序（accounts=TraeWork / wb=WorkBuddy / cb=CodeBuddy）
+  /// 主 Tab 顺序（accounts=TraeWork / wb=WorkBuddy / cb=CodeBuddy / ac=AutoClaw）
   tabOrder: string[];
 }
 
@@ -207,6 +209,7 @@ export function getConfig(): Promise<PetConfig> {
     showPhone: Boolean(v?.showPhone),
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
+    acLaunchOnStart: Boolean(v?.acLaunchOnStart),
     hidePet: Boolean(v?.hidePet),
     tabShowText: Boolean(v?.tabShowText),
     tabOrder: Array.isArray(v?.tabOrder) ? v.tabOrder.map(String) : [],
@@ -220,6 +223,7 @@ export function saveConfig(patch: Partial<PetConfig>): Promise<PetConfig> {
     showPhone: Boolean(v?.showPhone),
     fontScale: Number(v?.fontScale ?? 1),
     cbLaunchOnStart: Boolean(v?.cbLaunchOnStart),
+    acLaunchOnStart: Boolean(v?.acLaunchOnStart),
     hidePet: Boolean(v?.hidePet),
     tabShowText: Boolean(v?.tabShowText),
     tabOrder: Array.isArray(v?.tabOrder) ? v.tabOrder.map(String) : [],
@@ -279,7 +283,7 @@ export function fmtExpiry(ts: string | null | undefined): string {
 
 // ---------------- WorkBuddy / CodeBuddy（WorkPet daemon 原生支持） ----------------
 
-export type ClientKind = "wb" | "cb";
+export type ClientKind = "wb" | "cb" | "ac";
 
 /// 以 CDP 模式拉起 CodeBuddy 客户端
 export function launchCodeBuddy(force = false): Promise<void> {

@@ -1,18 +1,21 @@
 !macro customInit
+  ; 先杀桌面端，再按可执行文件路径精确杀掉 WorkPet 自带的 node daemon。
+  ; 不用带嵌套引号的 -Command 拼串（NSIS 传参后会失效），统一用 -EncodedCommand 免引号问题。
   nsExec::Exec 'taskkill /F /IM workpet.exe /T'
-  nsExec::Exec 'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name = \'node.exe\'\" | Where-Object { $_.ExecutablePath -like \'*WorkPet*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"'
-  Sleep 1000
+  nsExec::Exec 'powershell -NoProfile -EncodedCommand RwBlAHQALQBQAHIAbwBjAGUAcwBzACAAbgBvAGQAZQAgAC0ARQByAHIAbwByAEEAYwB0AGkAbwBuACAAUwBpAGwAZQBuAHQAbAB5AEMAbwBuAHQAaQBuAHUAZQAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAIAAkAF8ALgBQAGEAdABoACAALQBsAGkAawBlACAAJwAqAFcAbwByAGsAUABlAHQAKgAnACAAfQAgAHwAIABTAHQAbwBwAC0AUAByAG8AYwBlAHMAcwAgAC0ARgBvAHIAYwBlAA=='
+  Sleep 2000
 !macroend
 
 !macro customInstall
-  nsExec::Exec 'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name = \'node.exe\'\" | Where-Object { $_.ExecutablePath -like \'*WorkPet*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"'
-  Sleep 500
+  ; 安装段再补一次（防止 init 后又被拉起）；确保覆盖 binaries\node.exe 时无进程占用
+  nsExec::Exec 'powershell -NoProfile -EncodedCommand RwBlAHQALQBQAHIAbwBjAGUAcwBzACAAbgBvAGQAZQAgAC0ARQByAHIAbwByAEEAYwB0AGkAbwBuACAAUwBpAGwAZQBuAHQAbAB5AEMAbwBuAHQAaQBuAHUAZQAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAIAAkAF8ALgBQAGEAdABoACAALQBsAGkAawBlACAAJwAqAFcAbwByAGsAUABlAHQAKgAnACAAfQAgAHwAIABTAHQAbwBwAC0AUAByAG8AYwBlAHMAcwAgAC0ARgBvAHIAYwBlAA=='
+  Sleep 800
   ; 默认不创建桌面快捷方式：Tauri NSIS 安装完会在桌面生成 WorkPet.lnk，这里删除它
-  nsExec::Exec 'powershell -NoProfile -Command "$d=[Environment]::GetFolderPath(\'Desktop\'); Remove-Item -LiteralPath (Join-Path $d \'WorkPet.lnk\') -ErrorAction SilentlyContinue"'
+  nsExec::Exec 'powershell -NoProfile -EncodedCommand JABkAD0AWwBFAG4AdgBpAHIAbwBuAG0AZQBuAHQAXQA6ADoARwBlAHQARgBvAGwAZABlAHIAUABhAHQAaAAoACcARABlAHMAawB0AG8AcAAnACkAOwAgAFIAZQBtAG8AdgBlAC0ASQB0AGUAbQAgAC0ATABpAHQAZQByAGEAbABQAGEAdABoACAAKABKAG8AaQBuAC0AUABhAHQAaAAgACQAZAAgACcAVwBvAHIAawBQAGUAdAAuAGwAbgBrACcAKQAgAC0ARQByAHIAbwByAEEAYwB0AGkAbwBuACAAUwBpAGwAZQBuAHQAbAB5AEMAbwBuAHQAaQBuAHUAZQA='
 !macroend
 
 !macro customUnInstall
   nsExec::Exec 'taskkill /F /IM workpet.exe /T'
-  nsExec::Exec 'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name = \'node.exe\'\" | Where-Object { $_.ExecutablePath -like \'*WorkPet*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"'
-  Sleep 1000
+  nsExec::Exec 'powershell -NoProfile -EncodedCommand RwBlAHQALQBQAHIAbwBjAGUAcwBzACAAbgBvAGQAZQAgAC0ARQByAHIAbwByAEEAYwB0AGkAbwBuACAAUwBpAGwAZQBuAHQAbAB5AEMAbwBuAHQAaQBuAHUAZQAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAIAAkAF8ALgBQAGEAdABoACAALQBsAGkAawBlACAAJwAqAFcAbwByAGsAUABlAHQAKgAnACAAfQAgAHwAIABTAHQAbwBwAC0AUAByAG8AYwBlAHMAcwAgAC0ARgBvAHIAYwBlAA=='
+  Sleep 2000
 !macroend

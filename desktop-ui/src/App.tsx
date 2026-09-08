@@ -26,7 +26,7 @@ type Bootstrap = "booting" | "ready" | "failed";
 
 export default function App() {
   const [open, setOpen] = useState(true);
-  const [hidePet, setHidePet] = useState(false); // 隐藏桌面宠物：收起面板时整窗隐藏到托盘
+  const [hidePet, setHidePet] = useState(true); // 隐藏桌面宠物：默认开启（收起面板时整窗隐藏到托盘）
   const [deviceClaimDate, setDeviceClaimDate] = useState(''); // Trae 设备签到名额使用日期
   const [robotMenu, setRobotMenu] = useState<{ x: number; y: number } | null>(null); // 机器人右键菜单
   const [windowVisible, setWindowVisible] = useState(true); // 托盘图标控制的窗口显隐

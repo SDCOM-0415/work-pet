@@ -284,18 +284,64 @@ fn spawn_daemon() -> Result<(), String> {
         .map_err(|e| format!("启动后台服务失败: {e}"))
 }
 
-/// 确保 daemon 在运行：已在则直接返回；否则定位并后台拉起 node daemon.js，等待就绪。
+/// 期望的 daemon 版本（与桌面端 exe 同版本发布）。
+fn expected_daemon_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// 探测 47921 上的 daemon 是否为本包同版本（旧版本安装残留会返回不匹配）。
+pub fn daemon_version_matches() -> bool {
+    let mut cb = ureq::Agent::config_builder();
+    cb = cb.timeout_connect(Some(Duration::from_secs(2)));
+    cb = cb.timeout_global(Some(Duration::from_secs(4)));
+    cb = cb.http_status_as_error(false);
+    let agent = ureq::Agent::new_with_config(cb.build());
+    let mut r = agent.get(&format!("{API_BASE}/api/health"));
+    if let Some(t) = pet_token() {
+        r = r.header("X-WorkPet-Token", t);
+    }
+    match r.call() {
+        Ok(resp) => {
+            let text = resp
+                .into_body()
+                .read_to_string()
+                .unwrap_or_default();
+            let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+            v.get("version")
+                .and_then(|x| x.as_str())
+                .map(|ver| ver.trim_start_matches('v') == expected_daemon_version())
+                .unwrap_or(false)
+        }
+        Err(_) => false,
+    }
+}
+
+/// 确保 daemon 在运行且版本与本包一致：
+///  - 47921 上没有 daemon → 拉起新的；
+///  - 有 daemon 但版本不匹配（升级/降级后旧常驻进程残留）→ 先 /api/shutdown 旧进程，
+///    等端口释放后再拉起本包 daemon，避免前端一直连到旧逻辑。
 /// 若多个 exe 同时启动，daemon 已对端口冲突做过容错（EADDRINUSE 退出），属正常。
 pub fn ensure_daemon() -> Result<(), String> {
     if daemon_reachable() {
-        return Ok(());
+        if daemon_version_matches() {
+            return Ok(());
+        }
+        // 旧版本残留 daemon：先优雅停机，再等端口释放
+        let _ = do_request("POST", "/api/shutdown", None);
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline && daemon_reachable() {
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        if daemon_reachable() {
+            return Err("旧版后台服务未能停止，请手动结束残留的 node 进程后重启 Work Pet".to_string());
+        }
     }
     spawn_daemon()?;
-    // 等待 daemon 起来；最多 ~15s，轮询 health
+    // 等待本包 daemon 起来（版本一致才算就绪）；最多 ~20s
     std::thread::sleep(Duration::from_millis(500));
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::time::Instant::now() < deadline {
-        if daemon_reachable() {
+        if daemon_reachable() && daemon_version_matches() {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(800));

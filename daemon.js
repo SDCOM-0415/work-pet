@@ -25,7 +25,7 @@ const { spawn, execFileSync } = require('child_process');
 const isMac = process.platform === 'darwin';
 
 const APP_BRAND = 'TraeWork';
-const DAEMON_VERSION = '1.0.1';
+const DAEMON_VERSION = '1.0.2';
 const APP_VERSION = DAEMON_VERSION;
 const HOST = '127.0.0.1';
 const CDP_PORT = 9222;
@@ -47,66 +47,153 @@ const EXE_CANDIDATES = isMac
       '/Applications/TRAE SOLO CN.app/Contents/MacOS/TRAE SOLO CN',
       '/Applications/Trae CN.app/Contents/MacOS/Trae CN',
       '/Applications/Trae.app/Contents/MacOS/Trae',
-      path.join(os.homedir(), 'Applications', 'TRAE SOLO CN.app', 'Contents', 'MacOS', 'TRAE SOLO CN'),
-      path.join(os.homedir(), 'Applications', 'Trae CN.app', 'Contents', 'MacOS', 'Trae CN'),
-      path.join(os.homedir(), 'Applications', 'Trae.app', 'Contents', 'MacOS', 'Trae'),
+      path.join(
+        os.homedir(),
+        'Applications',
+        'TRAE SOLO CN.app',
+        'Contents',
+        'MacOS',
+        'TRAE SOLO CN'
+      ),
+      path.join(
+        os.homedir(),
+        'Applications',
+        'Trae CN.app',
+        'Contents',
+        'MacOS',
+        'Trae CN'
+      ),
+      path.join(
+        os.homedir(),
+        'Applications',
+        'Trae.app',
+        'Contents',
+        'MacOS',
+        'Trae'
+      ),
     ]
   : [
       'D:/Program Files/TRAE SOLO CN/TRAE SOLO CN.exe',
-      path.join(process.env.ProgramFiles || 'C:/Program Files', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-      path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
+      path.join(
+        process.env.ProgramFiles || 'C:/Program Files',
+        'TRAE SOLO CN',
+        'TRAE SOLO CN.exe'
+      ),
+      path.join(
+        process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)',
+        'TRAE SOLO CN',
+        'TRAE SOLO CN.exe'
+      ),
+      path.join(
+        process.env.LOCALAPPDATA || '',
+        'Programs',
+        'TRAE SOLO CN',
+        'TRAE SOLO CN.exe'
+      ),
     ];
 
-const DATA_DIR_CANDIDATES = ['TRAE SOLO CN', 'Trae CN', 'TraeWork', 'Trae']
-  .map((name) => path.join(USER_DATA_ROOT, name));
-
-function findTraeDataDir() {
-  const direct = DATA_DIR_CANDIDATES.find((d) => fs.existsSync(path.join(d, 'User', 'globalStorage', 'storage.json')));
-  if (direct) return direct;
-
-  // 兜底：扫描当前平台的用户数据根目录，寻找包含 Trae 登录态的 storage.json。
-  try {
-    for (const name of fs.readdirSync(USER_DATA_ROOT)) {
-      if (!/trae/i.test(name)) continue;
-      const dir = path.join(USER_DATA_ROOT, name);
-      const storage = path.join(dir, 'User', 'globalStorage', 'storage.json');
-      if (!fs.existsSync(storage)) continue;
-      try {
-        const raw = fs.readFileSync(storage, 'utf8');
-        if (raw.includes('iCubeAuthInfo://')) return dir;
-      } catch (_) {}
-    }
-  } catch (_) {}
-  return '';
-}
+const DATA_DIR_CANDIDATES = [
+  'TRAE SOLO CN',
+  'Trae CN',
+  'TraeWork',
+  'Trae',
+].map((name) => path.join(USER_DATA_ROOT, name));
 
 function findTraeExecutable() {
   const direct = EXE_CANDIDATES.find((f) => f && fs.existsSync(f));
   if (direct) return direct;
+
   if (!isMac) return '';
 
-  // macOS 兜底：扫描 /Applications 和 ~/Applications 中名称含 Trae 的 .app。
-  for (const root of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+  // macOS 兜底：
+  // 扫描 /Applications 与 ~/Applications 中名称包含 Trae 的 .app。
+  for (const root of [
+    '/Applications',
+    path.join(os.homedir(), 'Applications'),
+  ]) {
     let apps = [];
-    try { apps = fs.readdirSync(root).filter((n) => /trae/i.test(n) && n.endsWith('.app')); } catch (_) {}
+
+    try {
+      apps = fs
+        .readdirSync(root)
+        .filter((name) => /trae/i.test(name) && name.endsWith('.app'));
+    } catch (_) {}
+
     for (const app of apps) {
       const macosDir = path.join(root, app, 'Contents', 'MacOS');
+
       let bins = [];
-      try { bins = fs.readdirSync(macosDir); } catch (_) {}
+      try {
+        bins = fs.readdirSync(macosDir);
+      } catch (_) {}
+
       for (const bin of bins) {
         const full = path.join(macosDir, bin);
+
         try {
           if (fs.statSync(full).isFile()) return full;
         } catch (_) {}
       }
     }
   }
+
+  return '';
+}
+
+function findTraeDataDir() {
+  // 保留上游 v1.0.2 的逻辑：
+  // 多个 Trae 客户端并存时，优先选择 storage.json 中
+  // 真正含 iCubeAuthInfo 登录态的目录。
+  const scanDirs = [...DATA_DIR_CANDIDATES];
+
+  try {
+    for (const name of fs.readdirSync(USER_DATA_ROOT)) {
+      if (!/trae/i.test(name)) continue;
+
+      const dir = path.join(USER_DATA_ROOT, name);
+
+      if (!scanDirs.includes(dir)) {
+        scanDirs.push(dir);
+      }
+    }
+  } catch (_) {}
+
+  for (const dir of scanDirs) {
+    if (!dir || !fs.existsSync(dir)) continue;
+
+    const storage = path.join(
+      dir,
+      'User',
+      'globalStorage',
+      'storage.json'
+    );
+
+    if (!fs.existsSync(storage)) continue;
+
+    try {
+      if (
+        fs
+          .readFileSync(storage, 'utf8')
+          .includes('iCubeAuthInfo://')
+      ) {
+        return dir;
+      }
+    } catch (_) {}
+  }
+
+  // 都没有有效登录态时，回退到第一个实际存在的数据目录。
+  for (const dir of scanDirs) {
+    if (dir && fs.existsSync(dir)) return dir;
+  }
+
   return '';
 }
 
 function detectPaths() {
-  return { exe: findTraeExecutable(), dataDir: findTraeDataDir() };
+  return {
+    exe: findTraeExecutable(),
+    dataDir: findTraeDataDir(),
+  };
 }
 
 let CFG = { exe: '', dataDir: '' };
@@ -195,6 +282,7 @@ function loadStore() {
     traework: Object.assign({ currentSecret: null, deviceId: null, accounts: [] }, st.traework),
     workbuddy: Object.assign({ current: null, accounts: [] }, st.workbuddy),
     codebuddy: Object.assign({ current: null, accounts: [] }, st.codebuddy),
+    ac: Object.assign({ current: null, accounts: [] }, st.ac),
   };
 }
 function saveStore(store) {
@@ -488,7 +576,15 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'accounts'], tabShowText: false };
+const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'tw'], tabShowText: false, hidePet: true };
+// 旧配置兼容：TraeWork Tab 的 key 原为 'accounts'，v1.0.2 起统一为 'tw'
+function normalizeTabOrder(v) {
+  if (!Array.isArray(v)) return null;
+  const mapped = v.map((t) => (t === 'accounts' ? 'tw' : String(t)));
+  const known = ['wb', 'cb', 'ac', 'tw'];
+  const uniq = Array.from(new Set(mapped)).filter((t) => known.includes(t));
+  return uniq.length === known.length ? uniq : null;
+}
 function loadSettings() {
   try {
     return Object.assign({}, SETTING_DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
@@ -685,12 +781,17 @@ function collectExportAccounts() {
       current: readJsonOrNull(CB_AUTH_FILE),
       accounts: collectInfoFiles(CB_ACCOUNTS_DIR),
     },
+    autoclaw: {
+      current: clientReadAuth('ac'),
+      accounts: (store.ac && store.ac.accounts) || [],
+    },
   };
   // 把引擎目录的最新账号状态同步回单文件账号库，保证 WorkPet-accounts.json 始终完整
   store.traework.currentSecret = out.traework.currentSecret;
   store.traework.deviceId = out.traework.deviceId;
   store.workbuddy = { current: out.workbuddy.current, accounts: out.workbuddy.accounts };
   store.codebuddy = { current: out.codebuddy.current, accounts: out.codebuddy.accounts };
+  store.ac = { current: out.autoclaw.current, accounts: out.autoclaw.accounts };
   saveStore(store);
   return out;
 }
@@ -713,6 +814,7 @@ function exportBackupFile() {
       traework: data.traework.accounts.length,
       workbuddy: data.workbuddy.accounts.length,
       codebuddy: data.codebuddy.accounts.length,
+      autoclaw: (data.autoclaw.accounts || []).length,
     },
   };
 }
@@ -728,7 +830,7 @@ function listBackupFiles() {
 
 async function restoreBackupData(data) {
   if (!data || data.app !== 'WorkPet') throw new Error('不是有效的 WorkPet 备份文件');
-  const counts = { traework: 0, workbuddy: 0, codebuddy: 0 };
+  const counts = { traework: 0, workbuddy: 0, codebuddy: 0, autoclaw: 0 };
   const atomicWrite = (file, content) => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = file + '.tmp';
@@ -774,6 +876,17 @@ async function restoreBackupData(data) {
     if (data.codebuddy.current) atomicWrite(CB_AUTH_FILE, JSON.stringify(data.codebuddy.current, null, 2));
     store.codebuddy = { current: data.codebuddy.current || null, accounts: data.codebuddy.accounts || [] };
   }
+  // AutoClaw：仅并入账号库（不回写 auth.json —— 跨机恢复需本机 DPAPI 重加密，无意义）
+  if (data.autoclaw) {
+    for (const a of data.autoclaw.accounts || []) {
+      const uid = a && a.uid;
+      if (!uid) continue;
+      const idx = store.ac.accounts.findIndex((x) => x && String(x.uid) === String(uid));
+      if (idx >= 0) store.ac.accounts[idx] = Object.assign({}, store.ac.accounts[idx], a, { backedUpAt: Date.now() });
+      else store.ac.accounts.push(Object.assign({ backedUpAt: Date.now() }, a));
+      counts.autoclaw = (counts.autoclaw || 0) + 1;
+    }
+  }
   saveStore(store);
   return counts;
 }
@@ -786,6 +899,20 @@ async function restoreBackupData(data) {
 // 签到/积分 = 各端 apiHost 的 HTTP 接口（Bearer accessToken）。
 
 const { extractCreditSegments, sortCreditSegments, mergeCreditSegments } = require('./credit-segments.js');
+
+// ---------------- AutoClaw（智谱 AutoGLM 桌面端，独立账号体系） ----------------
+// 登录态 = %APPDATA%/autoclaw/auth.json（token/refreshToken 为 Electron safeStorage "enc:v10" 加密，
+//   密钥在 Local State 的 os_crypt.encrypted_key —— DPAPI 包裹的 AES-256-GCM key，与浏览器同构）。
+// 签到 = POST /autoclaw-proxy/proxy/autoclaw-task-complete { task_id: 'daily_signin' }（任务中心任务，每日 200 分）。
+// 积分 = GET /agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw（total_points / expiring_points）。
+// 签名头 = X-Auth-Appid/X-Auth-TimeStamp/X-Auth-Sign（md5(appid&ts&appkey)），token 走 Authorization Bearer。
+// Cookie 时限 = JWT exp（access_token 是 JWT，24h）；refresh 走 /userapi/v1/refresh（refresh_token 轮换，回写 auth.json）。
+const AC_DATA_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'autoclaw');
+const AC_AUTH_FILE = path.join(AC_DATA_DIR, 'auth.json');
+const AC_LOCAL_STATE = path.join(AC_DATA_DIR, 'Local State');
+const AC_API_HOST = 'https://autoglm-acceleration-api.zhipuai.cn';
+const AC_APP_ID = '100003';
+const AC_APP_KEY = '38d2391985e2369a5fb8227d8e6cd5e5';
 
 const CLIENT_PROFILES = {
   wb: {
@@ -802,11 +929,264 @@ const CLIENT_PROFILES = {
     checkinHosts: ['https://www.codebuddy.cn'],
     cdpPort: 9224,
   },
+  ac: {
+    id: 'ac', name: 'AutoClaw',
+    authFile: AC_AUTH_FILE,
+    apiHost: AC_API_HOST,
+    checkinHosts: [AC_API_HOST],
+    cdpPort: 9226,
+  },
 };
+
+// ---------------- AutoClaw 登录态解密（DPAPI + AES-256-GCM） ----------------
+// Node 无内置 DPAPI，解 Local State 的 key 需要拉起 powershell。
+// 绝不能像旧实现那样用 execFileSync 同步等它：powershell 一旦卡死（曾实测挂死数分钟），
+// 整个 daemon 事件循环被堵住，HTTP 全部无响应，前端就报「后台服务未运行」。
+// 因此这里统一为：异步 spawn + 12s 硬超时（按进程树强杀）+ AES key 只解一次并缓存。
+const AC_KEY_PENDING = Symbol('ac-key-pending');
+let acKeyCache = null;    // 已解出的 AES-256 key（Buffer），只解密一次
+let acKeyPromise = null;  // 进行中的异步解密（并发共享）
+
+/** 仅当 win-dpapi 原生模块可用时同步解密；不可用返回 null（走 powershell） */
+function acDpapiNative(data) {
+  try {
+    const { CryptUnprotectData } = (() => { try { return require('win-dpapi'); } catch (_) { return {}; } })();
+    if (CryptUnprotectData) return CryptUnprotectData(Buffer.from(data));
+  } catch (_) {}
+  return null;
+}
+
+/** 异步跑一次 powershell Unprotect；12s 未完成则按进程树强杀，绝不悬挂 */
+function acDpapiViaPowershell(data) {
+  return new Promise((resolve, reject) => {
+    const inB64 = Buffer.from(data).toString('base64');
+    const ps = `$ProgressPreference='SilentlyContinue'; Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${inB64}'), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser))`;
+    const encCmd = Buffer.from(ps, 'utf16le').toString('base64');
+    const child = spawn('powershell', ['-NoProfile', '-EncodedCommand', encCmd], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // 只杀 powershell 不够（其子进程可能还握着 stdout 管道）；按进程树强杀
+      try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch (_) {}
+      reject(new Error('DPAPI 解密超时（已强杀 powershell 进程树）'));
+    }, 12000);
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', () => {});
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error('DPAPI powershell 启动失败: ' + e.message)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (code !== 0) { reject(new Error('DPAPI powershell 退出码 ' + code)); return; }
+      try {
+        // PowerShell 5 会在 stdout 前打 CLIXML 进度块，去掉到 </Objs> 之后的部分
+        const idx = out.lastIndexOf('</Objs>');
+        const clean = (idx >= 0 ? out.slice(idx + 7) : out).trim();
+        const key = Buffer.from(clean, 'base64');
+        if (!key.length) throw new Error('解密结果为空');
+        resolve(key);
+      } catch (e) { reject(new Error('DPAPI 解密结果解析失败: ' + e.message)); }
+    });
+  });
+}
+
+/** 获取 AutoClaw AES key：只解一次并缓存；并发调用共享同一个 Promise */
+function acRequestKey() {
+  if (acKeyCache) return Promise.resolve(acKeyCache);
+  if (!acKeyPromise) {
+    acKeyPromise = (async () => {
+      const ls = readJsonOrNull(AC_LOCAL_STATE);
+      const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
+      if (!enc) throw new Error('AutoClaw Local State 无 os_crypt.encrypted_key');
+      const raw = Buffer.from(enc, 'base64');
+      if (raw.slice(0, 5).toString() !== 'DPAPI') return raw;
+      const viaNative = acDpapiNative(raw.slice(5));
+      if (viaNative) return viaNative;
+      return await acDpapiViaPowershell(raw.slice(5));
+    })().then((k) => { acKeyCache = k; acKeyPromise = null; return k; })
+      .catch((e) => { acKeyPromise = null; throw e; });
+  }
+  return acKeyPromise;
+}
+
+/** 后台预热 key（静默失败；daemon 启动时调用，让首次读账号前已就绪） */
+function acWarmKey() {
+  acRequestKey().catch((e) => log('[client:ac] AES key 预取失败: ' + e.message));
+}
+
+/** 同步取 key：已缓存直接返回；未就绪抛 AC_KEY_PENDING（调用方快速失败，绝不阻塞） */
+function acKeySync() {
+  if (acKeyCache) return acKeyCache;
+  throw AC_KEY_PENDING;
+}
+
+/** 纯 AES-256-GCM 解密单个 token；key 可显式传入（异步路径）或走缓存（同步路径） */
+function acDecryptToken(encStr, key) {
+  if (!encStr) return '';
+  if (!encStr.startsWith('enc:')) return encStr.replace(/^Bearer\s+/, '');
+  const raw = Buffer.from(encStr.slice(4), 'base64');
+  if (raw.slice(0, 3).toString() !== 'v10') return encStr.replace(/^Bearer\s+/, '');
+  const k = key || acKeySync(); // 同步路径未就绪时抛 AC_KEY_PENDING
+  const nonce = raw.slice(3, 15), ct = raw.slice(15);
+  const tag = ct.slice(ct.length - 16), body = ct.slice(0, ct.length - 16);
+  const dec = crypto.createDecipheriv('aes-256-gcm', k, nonce);
+  dec.setAuthTag(tag);
+  const pt = Buffer.concat([dec.update(body), dec.final()]);
+  return pt.toString('utf8').replace(/^Bearer\s+/, '');
+}
+
+/** 异步解密单 token（等待/触发 key 就绪后再解） */
+async function acDecryptTokenAsync(encStr) {
+  if (!encStr || !encStr.startsWith('enc:')) return acDecryptToken(encStr);
+  return acDecryptToken(encStr, await acRequestKey());
+}
+
+/** 读取 AutoClaw 登录态（解密后），返回 { token, refreshToken, userId, phone, deviceId, raw } 或 { error } */
+function acReadAuth() {
+  const raw = readJsonOrNull(AC_AUTH_FILE);
+  if (!raw || !raw.token) return null;
+  try {
+    const key = acKeySync();
+    const token = acDecryptToken(raw.token, key);
+    const refreshToken = acDecryptToken(raw.refreshToken || '', key);
+    return acBuildAuth(raw, token, refreshToken);
+  } catch (e) {
+    // key 未就绪（AC_KEY_PENDING）或解密失败：快速返回错误，绝不阻塞等待 powershell
+    return { error: e === AC_KEY_PENDING ? 'AutoClaw 登录态解密未就绪（稍后自动重试）' : 'AutoClaw 登录态解密失败: ' + e.message };
+  }
+}
+
+/** 异步版 acReadAuth：先确保 AES key 就绪（内部 12s 硬超时+树杀），再同步解密 */
+async function acReadAuthAsync() {
+  const raw = readJsonOrNull(AC_AUTH_FILE);
+  if (!raw || !raw.token) return null;
+  try {
+    const key = await acRequestKey();
+    const token = acDecryptToken(raw.token, key);
+    const refreshToken = acDecryptToken(raw.refreshToken || '', key);
+    return acBuildAuth(raw, token, refreshToken);
+  } catch (e) {
+    return { error: 'AutoClaw 登录态解密失败: ' + e.message };
+  }
+}
+
+/** 由明文 token/refreshToken 组装统一形状 */
+function acBuildAuth(raw, token, refreshToken) {
+  let jwt = {};
+  try {
+    const p = token.split('.')[1];
+    if (p) jwt = JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+  } catch (_) {}
+  return {
+    token,
+    refreshToken,
+    userId: (jwt.user_id || raw.userInfo && raw.userInfo.user_id || ''),
+    phone: (raw.userInfo && (raw.userInfo.user_phone || raw.userInfo.phone)) || '',
+    deviceId: raw.deviceId || '',
+    jwtExp: jwt.exp ? jwt.exp * 1000 : null,
+    raw,
+  };
+}
+
+function acSignHeaders(extra) {
+  const ts = String(Math.floor(Date.now() / 1000));
+  const sign = crypto.createHash('md5').update(`${AC_APP_ID}&${ts}&${AC_APP_KEY}`).digest('hex');
+  return Object.assign({
+    accept: '*/*',
+    'x-version': '1.0.0',
+    'x-tm': 'win',
+    'x-product': 'autoclaw',
+    'x-auth-appid': AC_APP_ID,
+    'x-auth-timestamp': ts,
+    'x-auth-sign': sign,
+    'x-trace-id': crypto.randomUUID(),
+    'user-agent': 'autoclaw/1.0',
+  }, extra || {});
+}
+
+/** AutoClaw refresh：refresh_token 轮换，成功后回写 auth.json（加密格式保持原样：只换 token 字段） */
+async function acRefreshToken() {
+  const auth = await acReadAuthAsync();
+  if (!auth || auth.error || !auth.refreshToken) throw new Error('AutoClaw 无 refresh_token');
+  const body = JSON.stringify({ source_id: 'autoclaw', device_id: auth.deviceId, refresh_token: auth.refreshToken });
+  const r = await fetch(AC_API_HOST + '/userapi/v1/refresh', {
+    method: 'POST',
+    headers: acSignHeaders({ 'content-type': 'application/json' }),
+    body,
+    signal: AbortSignal.timeout(12000),
+  });
+  const o = await r.json().catch(() => ({}));
+  if (o.code !== 0 || !o.data || !o.data.access_token) throw new Error('refresh 失败: ' + (o.msg || ('HTTP ' + r.status)));
+  return { accessToken: String(o.data.access_token), refreshToken: String(o.data.refresh_token || auth.refreshToken), jwtExp: null };
+}
+
+/** 解析 JWT exp（毫秒） */
+function acJwtExpMs(token) {
+  try {
+    const p = token.split('.')[1];
+    if (!p) return null;
+    const j = JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    return j.exp ? j.exp * 1000 : null;
+  } catch (_) { return null; }
+}
+
+/** 把刷新后的 token 写回 auth.json（保持 enc:v10 加密格式：重新加密需要 DPAPI，这里只在能加密时回写，否则不动文件） */
+async function acPersistRefreshedToken(newAccess, newRefresh) {
+  try {
+    const raw = readJsonOrNull(AC_AUTH_FILE);
+    if (!raw) return false;
+    // 尝试用同 key 重新加密（Electron safeStorage v10 = AES-256-GCM，key 已解出）
+    const key = await acRequestKey();
+    const enc = (plain) => {
+      const nonce = crypto.randomBytes(12);
+      const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+      const ct = Buffer.concat([cipher.update(Buffer.from(plain, 'utf8')), cipher.final()]);
+      const tag = cipher.getAuthTag();
+      return 'enc:v10' + Buffer.concat([nonce, ct, tag]).toString('base64');
+    };
+    const next = Object.assign({}, raw, {
+      token: enc('Bearer ' + newAccess.replace(/^Bearer\s+/, '')),
+      refreshToken: enc('Bearer ' + newRefresh.replace(/^Bearer\s+/, '')),
+      updatedAt: String(Date.now()),
+    });
+    const tmp = AC_AUTH_FILE + '.workpet-tmp';
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    fs.renameSync(tmp, AC_AUTH_FILE);
+    return true;
+  } catch (e) {
+    log('[client:ac] 回写 auth.json 失败（不影响签到）: ' + e.message);
+    return false;
+  }
+}
+
+/** refresh 成功后同步进账号库（ac 段） */
+function acSyncStoreAfterRefresh(accessToken, refreshToken, jwtExp) {
+  try {
+    const store = loadStore();
+    if (!store.ac) store.ac = { current: null, accounts: [] };
+    let uid = '';
+    try {
+      const p = accessToken.split('.')[1];
+      if (p) uid = String(JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')).user_id || '');
+    } catch (_) {}
+    const rec0 = store.ac.current || store.ac.accounts[0];
+    uid = uid || (rec0 && rec0.uid) || '';
+    if (!uid) return;
+    const idx = store.ac.accounts.findIndex((x) => x && String(x.uid) === uid);
+    if (idx < 0) return;
+    store.ac.accounts[idx] = Object.assign({}, store.ac.accounts[idx], {
+      accessToken, refreshToken, tokenExpiresAt: jwtExp || null, lastRefreshTime: Date.now(),
+    });
+    if (store.ac.current && String(store.ac.current.uid) === uid) store.ac.current = store.ac.accounts[idx];
+    saveStore(store);
+  } catch (_) {}
+}
+
 const CLIENT_CHECKIN_CACHE_FILE = path.join(DATA_ROOT, 'client-checkin-cache.json');
 const clientCheckinState = {
   wb: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
   cb: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
+  ac: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
 };
 // WB/CB 账号体系互通：同一账号在两端并发签到会被服务端以「请求处理中」拒绝，
 // 因此签到全局串行（一次只跑一个 profile 的签到轮）
@@ -831,6 +1211,20 @@ function clientSaveCheckinCache(profileId, cache) {
 
 /** 读取客户端当前登录（auth 文件为唯一真相） */
 function clientReadAuth(profileId) {
+  if (profileId === 'ac') {
+    // AutoClaw：解密 auth.json，归一化成 { account, auth } 形状供下游统一消费
+    const a = acReadAuth();
+    if (!a || a.error || !a.userId) return null;
+    return {
+      account: { uid: String(a.userId), nickname: a.phone || String(a.userId), phoneNumber: a.phone || '' },
+      auth: {
+        accessToken: a.token,
+        refreshToken: a.refreshToken || '',
+        expiresAt: a.jwtExp || null,
+        lastRefreshTime: Date.now(),
+      },
+    };
+  }
   const raw = readJsonOrNull(CLIENT_PROFILES[profileId].authFile);
   if (!raw || !raw.account || !raw.account.uid) return null;
   return raw;
@@ -841,8 +1235,26 @@ function clientSyncStore(profileId) {
   const raw = clientReadAuth(profileId);
   if (!raw) return;
   const store = loadStore();
-  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
+  const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
   const uid = String(raw.account.uid);
+  if (profileId === 'ac') {
+    // ac 段存扁平记录（uid/accessToken/tokenExpiresAt），与 wb/cb 的 { account, auth } 结构不同
+    const rec = {
+      uid,
+      nickname: raw.account.nickname || uid,
+      phone: raw.account.phoneNumber || '',
+      tokenExpiresAt: raw.auth.expiresAt || null,
+      accessToken: raw.auth.accessToken,
+      refreshToken: raw.auth.refreshToken || '',
+      lastRefreshTime: raw.auth.lastRefreshTime || Date.now(),
+    };
+    const i = sec.accounts.findIndex((x) => x && String(x.uid) === uid);
+    if (i >= 0) sec.accounts[i] = Object.assign({}, sec.accounts[i], rec);
+    else sec.accounts.push(rec);
+    sec.current = sec.accounts[i >= 0 ? i : sec.accounts.length - 1];
+    saveStore(store);
+    return;
+  }
   const idx = sec.accounts.findIndex((a) => a && a.account && String(a.account.uid) === uid);
   if (idx >= 0) sec.accounts[idx] = raw;
   else sec.accounts.push(raw);
@@ -854,12 +1266,29 @@ function clientSyncStore(profileId) {
 function clientListAccounts(profileId) {
   clientSyncStore(profileId);
   const store = loadStore();
-  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
+  const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
   const currentRaw = clientReadAuth(profileId);
   const currentUid = currentRaw && currentRaw.account ? String(currentRaw.account.uid) : null;
   const seen = new Set();
   const list = [];
   const push = (raw) => {
+    if (profileId === 'ac') {
+      // ac 段扁平记录
+      if (!raw || !raw.uid) return;
+      const uid2 = String(raw.uid);
+      if (seen.has(uid2)) return;
+      seen.add(uid2);
+      list.push({
+        uid: uid2,
+        nickname: raw.nickname || uid2,
+        phone: raw.phone || '',
+        uin: '',
+        tokenExpiresAt: raw.tokenExpiresAt || null,
+        refreshExpiresAt: null,
+        lastRefreshTime: raw.lastRefreshTime || null,
+      });
+      return;
+    }
     if (!raw || !raw.account) return;
     const uid = String(raw.account.uid);
     if (seen.has(uid)) return;
@@ -897,12 +1326,73 @@ function clientTokenFor(profileId, uid) {
   const raw = clientReadAuth(profileId);
   if (raw && String(raw.account.uid) === String(uid)) return raw.auth && raw.auth.accessToken;
   const store = loadStore();
-  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
-  const rec = sec.accounts.find((a) => a && a.account && String(a.account.uid) === String(uid));
-  return rec && rec.auth ? rec.auth.accessToken : null;
+  const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
+  const rec = sec.accounts.find((a) => a && (a.account ? String(a.account.uid) === String(uid) : String(a.uid) === String(uid)));
+  if (!rec) return null;
+  if (rec.auth) return rec.auth.accessToken;
+  return rec.accessToken || null; // ac 段账号记录直接存 accessToken
+}
+
+/** AutoClaw 签到 = 任务中心 daily_signin 任务完成（每日 200 分）；响应 data.already_completed = 已签 */
+async function acDailyCheckin(accessToken) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(2000);
+    try {
+      const r = await fetch(AC_API_HOST + '/autoclaw-proxy/proxy/autoclaw-task-complete', {
+        method: 'POST',
+        headers: acSignHeaders({ 'content-type': 'application/json', authorization: 'Bearer ' + accessToken }),
+        body: JSON.stringify({ task_id: 'daily_signin' }),
+        signal: AbortSignal.timeout(12000),
+      });
+      const o = await r.json().catch(() => ({}));
+      const code = o.code;
+      const already = !!(o.data && o.data.already_completed);
+      if (code === 0 || already) {
+        return { ok: true, already, code, message: o.msg || 'ok', body: o, reward: (o.data && o.data.reward_points) || 0 };
+      }
+      if (code === 410000 || r.status === 401) return { ok: false, code, message: '登录身份过期', body: o };
+      lastErr = o.msg || ('HTTP ' + r.status);
+    } catch (e) {
+      lastErr = e.message;
+    }
+  }
+  return { ok: false, message: lastErr || '签到失败' };
+}
+
+/** AutoClaw 积分查询：GET /agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw */
+async function acFetchCredits(accessToken) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await fetch(AC_API_HOST + '/agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw', {
+        method: 'GET',
+        headers: acSignHeaders({ authorization: 'Bearer ' + accessToken }),
+        signal: AbortSignal.timeout(12000),
+      });
+      const o = await r.json().catch(() => ({}));
+      if (o.code !== 0) throw new Error(o.msg || ('code=' + o.code));
+      const total = Number(o.data && o.data.total_points) || 0;
+      const expiring = Number(o.data && o.data.expiring_points) || 0;
+      const expireText = String((o.data && o.data.expiring_points_text) || '');
+      const segments = [];
+      if (expiring > 0) {
+        segments.push({ remaining: expiring, total: expiring, expiresAt: null, source: expireText || '即将过期' });
+      }
+      if (total - expiring > 0) {
+        segments.push({ remaining: total - expiring, total: total - expiring, expiresAt: null, source: '长期积分' });
+      }
+      return { credits: total, count: segments.length, totalDosage: 0, segments };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) await sleep(300 * attempt);
+    }
+  }
+  throw lastErr || new Error('积分查询失败');
 }
 
 async function clientDailyCheckin(profileId, accessToken) {
+  if (profileId === 'ac') return acDailyCheckin(accessToken);
   const profile = CLIENT_PROFILES[profileId];
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -979,10 +1469,26 @@ function clientSyncTokenExpiryAfterCheckin(profileId, uid, respBody) {
   };
 
   const store = loadStore();
-  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
-  const idx = sec.accounts.findIndex((x) => x && x.account && String(x.account.uid) === String(uid));
+  const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
+  const idx = sec.accounts.findIndex((x) => x && (x.account ? String(x.account.uid) === String(uid) : String(x.uid) === String(uid)));
   if (idx < 0) return;
   const rec = sec.accounts[idx];
+
+  // AutoClaw：账号记录是扁平结构（uid/accessToken/tokenExpiresAt），JWT exp 即 Cookie 时限
+  if (profileId === 'ac') {
+    const fileAuth = clientReadAuth('ac');
+    const fileExp = fileAuth && fileAuth.auth ? fileAuth.auth.expiresAt : null;
+    const prevExp = rec.tokenExpiresAt || null;
+    const nextExp = fileExp != null ? fileExp : prevExp;
+    if (nextExp !== prevExp && nextExp != null) {
+      sec.accounts[idx] = Object.assign({}, rec, { tokenExpiresAt: nextExp, lastRefreshTime: Date.now() });
+      if (sec.current && String(sec.current.uid) === String(uid)) sec.current = sec.accounts[idx];
+      saveStore(store);
+      log('[client:ac] ' + (rec.nickname || uid) + ' Cookie 时限已同步 -> ' + new Date(nextExp).toISOString());
+    }
+    return;
+  }
+
   const prevAuth = rec.auth || {};
   const nextAuth = Object.assign({}, prevAuth);
 
@@ -1028,6 +1534,8 @@ function clientSyncTokenExpiryAfterCheckin(profileId, uid, respBody) {
 async function clientClaimDailyForAll(profileId) {
   const st = clientCheckinState[profileId];
   if (st.inFlight || clientClaimGlobalLock) return { skipped: true, reason: 'in-flight' };
+  // AutoClaw 首次读账号前确保 AES key 已就绪（异步，12s 硬超时；失败则本轮按无 key 处理）
+  if (profileId === 'ac') { try { await acRequestKey(); } catch (_) {} }
   const accounts = clientListAccounts(profileId).accounts;
   if (!accounts.length) return { skipped: true, reason: 'no-accounts' };
   st.inFlight = true;
@@ -1039,10 +1547,15 @@ async function clientClaimDailyForAll(profileId) {
   st.finishedAt = 0;
   const cache = clientLoadCheckinCache(profileId);
   const today = todayStrLocal();
+  const results = [];
   try {
     for (const a of accounts) {
       const hit = cache[a.uid];
-      if (hit && hit.date === today && hit.ok) { st.done++; continue; }
+      if (hit && hit.date === today && hit.ok) {
+        st.done++;
+        results.push({ uid: a.uid, nickname: a.nickname || a.uid, ok: true, already: !!hit.already, msg: hit.message || '今日已签' });
+        continue;
+      }
       const tk = clientTokenFor(profileId, a.uid);
       let rec;
       let respBody = null;
@@ -1057,7 +1570,25 @@ async function clientClaimDailyForAll(profileId) {
       // 签到后同步该账号的 Cookie 时限（tokenExpiresAt）：当前登录账号以 auth 文件为准，
       // 响应带刷新 token 的有效期则兜底更新，账号库不再残留旧的有效期
       try { clientSyncTokenExpiryAfterCheckin(profileId, a.uid, respBody); } catch (_) {}
+      // AutoClaw：token 是 24h JWT，签到时若快过期（<2h）自动 refresh 并回写 auth.json，
+      // 让「Cookie 时限」跟随签到保持即时续期（与用户需求：签到即同步 Cookie 时限一致）
+      if (profileId === 'ac' && rec.ok) {
+        try {
+          const cur = clientReadAuth('ac');
+          const exp = cur && cur.auth ? cur.auth.expiresAt : null;
+          if (exp != null && exp - Date.now() < 2 * 3600 * 1000) {
+            const r2 = await acRefreshToken();
+            const newExp = acJwtExpMs(r2.accessToken);
+            await acPersistRefreshedToken(r2.accessToken, r2.refreshToken);
+            acSyncStoreAfterRefresh(r2.accessToken, r2.refreshToken, newExp);
+            log('[client:ac] token 快过期，已 refresh 并回写，新时限 -> ' + (newExp ? new Date(newExp).toISOString() : '(无)'));
+          }
+        } catch (e) {
+          log('[client:ac] token refresh 失败（不影响本次签到）: ' + e.message);
+        }
+      }
       st.done++;
+      results.push({ uid: a.uid, nickname: a.nickname || a.uid, ok: !!rec.ok, already: !!rec.already, msg: rec.message || '' });
       log('[client:' + profileId + '] ' + a.nickname + ' 签到: ' + (rec.ok ? (rec.already ? '已签' : '成功') : rec.message));
       await sleep(500);
     }
@@ -1067,7 +1598,7 @@ async function clientClaimDailyForAll(profileId) {
     st.finishedAt = Date.now();
     clientClaimGlobalLock = false;
   }
-  return { total: st.total, done: st.done };
+  return { total: st.total, done: st.done, results };
 }
 
 /** 积分查询（credit-resource-queries + fetchResource） */
@@ -1084,6 +1615,7 @@ function clientBuildResourceBody(now) {
 }
 
 async function clientFetchCredits(profileId, accessToken) {
+  if (profileId === 'ac') return acFetchCredits(accessToken);
   const profile = CLIENT_PROFILES[profileId];
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1172,16 +1704,21 @@ async function clientReloadViaCdp(profileId) {
 }
 
 // 登录文件变化 → 同步进账号库（每次打开/切换客户端都会重写 auth 文件）
-for (const pid of ['wb', 'cb']) {
+// AutoClaw 的同步要先异步解密（key 缓存+树杀超时），不能同步阻塞事件循环
+for (const pid of ['wb', 'cb', 'ac']) {
   try {
     fs.watchFile(CLIENT_PROFILES[pid].authFile, { interval: 5000 }, (cur, prev) => {
       if (!fs.existsSync(CLIENT_PROFILES[pid].authFile)) return;
       if (cur.mtimeMs !== prev.mtimeMs) {
-        try { clientSyncStore(pid); log('[client:' + pid + '] 登录文件变化，已同步账号库'); } catch (_) {}
+        const sync = () => { try { clientSyncStore(pid); log('[client:' + pid + '] 登录文件变化，已同步账号库'); } catch (_) {} };
+        if (pid === 'ac') acRequestKey().then(sync).catch(() => {});
+        else sync();
       }
     });
   } catch (_) {}
 }
+// 启动即预热 AutoClaw AES key（后台异步，不阻塞；避免首次读账号时等解密）
+try { if (fs.existsSync(AC_AUTH_FILE)) acWarmKey(); } catch (_) {}
 
 
 async function rotateAllAccounts({ claim }) {
@@ -1351,6 +1888,18 @@ async function runClaimAll() {
     const results = await rotateAllAccounts({ claim: true });
     claimAllJob.results = results;
     claimAllJob.done = results.length;
+    // AutoClaw：独立账号体系，一并签到（每日 daily_signin 任务，与 Trae 轮换互不影响）；
+    // 结果并入 claimAllJob（total/results/done），前端「全部签到」进度和完成提示一起统计
+    try {
+      const acRes = await clientClaimDailyForAll('ac');
+      if (!acRes.skipped) {
+        claimAllJob.total += acRes.total || 0;
+        claimAllJob.results = claimAllJob.results.concat(acRes.results || []);
+        claimAllJob.done = claimAllJob.results.length;
+      }
+    } catch (e) {
+      log('[claim_all] AutoClaw 签到异常: ' + e.message);
+    }
   } catch (e) {
     log('[claim_all] 异常: ' + e.message);
   } finally {
@@ -1639,6 +2188,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (parts[4] === 'accounts') {
         clientClaimDailyForAll(pid).catch((e) => log('[client:' + pid + '] 自动签到失败: ' + e.message));
+        // AutoClaw 先确保解密 key 就绪，否则首次列表拿不到当前账号（同步路径快速失败不阻塞）
+        if (pid === 'ac') { try { await acRequestKey(); } catch (_) {} }
         const list = clientListAccounts(pid);
         return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
       }
@@ -1664,7 +2215,12 @@ const server = http.createServer(async (req, res) => {
       if (parts[4] === 'switch') {
         const uid = (body.uid || '').trim();
         const store = loadStore();
-        const sec = store[pid === 'wb' ? 'workbuddy' : 'codebuddy'];
+        const sec = store[pid === 'wb' ? 'workbuddy' : pid === 'cb' ? 'codebuddy' : 'ac'];
+        if (pid === 'ac') {
+          // AutoClaw：登录态只有本机一份（auth.json），无多账号文件可切换；
+          // 备份库里的其他账号只有 accessToken，回写会破坏 safeStorage 加密一致性，不支持
+          return sendJson(res, 400, { ok: false, error: 'AutoClaw 暂不支持多账号切换（登录态由 AutoClaw 客户端管理）' });
+        }
         const raw = sec.accounts.find((a) => a && a.account && String(a.account.uid) === String(uid));
         if (!raw) return sendJson(res, 404, { ok: false, error: '账号备份不存在' });
         try {
@@ -1682,9 +2238,13 @@ const server = http.createServer(async (req, res) => {
       if (parts[4] === 'delete') {
         const uid = (body.uid || '').trim();
         const store = loadStore();
-        const sec = store[pid === 'wb' ? 'workbuddy' : 'codebuddy'];
+        const sec = store[pid === 'wb' ? 'workbuddy' : pid === 'cb' ? 'codebuddy' : 'ac'];
         const before = sec.accounts.length;
-        sec.accounts = sec.accounts.filter((a) => a && a.account && String(a.account.uid) !== String(uid));
+        if (pid === 'ac') {
+          sec.accounts = sec.accounts.filter((a) => a && String(a.uid) !== String(uid));
+        } else {
+          sec.accounts = sec.accounts.filter((a) => a && a.account && String(a.account.uid) !== String(uid));
+        }
         saveStore(store);
         return sendJson(res, 200, { ok: true, deleted: before - sec.accounts.length });
       }
@@ -1762,7 +2322,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       const s = loadSettings();
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, acLaunchOnStart: !!s.acLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: normalizeTabOrder(s.tabOrder) || ['wb', 'cb', 'ac', 'tw'] });
     }
     if (req.method === 'POST' && url.pathname === '/api/config') {
       const body = await readBody(req);
@@ -1772,16 +2332,16 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.showPhone === 'boolean') patch.showPhone = body.showPhone;
       if (typeof body.fontScale === 'number' && body.fontScale >= 0.8 && body.fontScale <= 1.5) patch.fontScale = body.fontScale;
       if (typeof body.cbLaunchOnStart === 'boolean') patch.cbLaunchOnStart = body.cbLaunchOnStart;
+      if (typeof body.acLaunchOnStart === 'boolean') patch.acLaunchOnStart = body.acLaunchOnStart;
       if (typeof body.hidePet === 'boolean') patch.hidePet = body.hidePet;
       if (typeof body.tabShowText === 'boolean') patch.tabShowText = body.tabShowText;
       if (Array.isArray(body.tabOrder)) {
-        const known = ['wb', 'cb', 'accounts'];
-        const order = Array.from(new Set(body.tabOrder.map((t) => String(t))).values()).filter((t) => known.includes(t));
-        if (order.length === known.length) patch.tabOrder = order;
+        const order = normalizeTabOrder(body.tabOrder);
+        if (order) patch.tabOrder = order;
       }
       const s = saveSettings(patch);
       log('[config] 已保存设置: ' + JSON.stringify(patch));
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: Array.isArray(s.tabOrder) && s.tabOrder.length === 3 ? s.tabOrder : ['wb', 'cb', 'accounts'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, acLaunchOnStart: !!s.acLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: normalizeTabOrder(s.tabOrder) || ['wb', 'cb', 'ac', 'tw'] });
     }
     if (req.method === 'GET' && url.pathname === '/api/check-update') {
       try {
@@ -2090,6 +2650,47 @@ async function main() {
       }
     } catch (_) {}
   }, 5 * 60 * 1000).unref();
+
+  // AutoClaw：每 5 分钟把 auth.json 里最新的 JWT exp（Cookie 时限）同步进账号库 ac 段；
+  // token 快过期（<2h）时自动 refresh 并回写 auth.json，时限跟随签到/刷新即时续期。
+  // 解密走异步 acReadAuthAsync（key 缓存 + 12s 硬超时树杀），不阻塞事件循环。
+  setInterval(() => {
+    if (claimAllJob.running || clientClaimGlobalLock) return;
+    (async () => {
+      try {
+        const a = await acReadAuthAsync();
+        if (!a || a.error || !a.token) return;
+        acSyncStore(a);
+        const exp = a.jwtExp || acJwtExpMs(a.token);
+        if (exp != null && exp - Date.now() < 2 * 3600 * 1000 && a.refreshToken) {
+          log('[client:ac] token 快过期，自动 refresh');
+          acRefreshToken()
+            .then(async (r) => {
+              const newExp = acJwtExpMs(r.accessToken);
+              await acPersistRefreshedToken(r.accessToken, r.refreshToken);
+              acSyncStoreAfterRefresh(r.accessToken, r.refreshToken, newExp);
+              log('[client:ac] refresh 完成，新时限 -> ' + (newExp ? new Date(newExp).toISOString() : '(无)'));
+            })
+            .catch((e) => log('[client:ac] 自动 refresh 失败: ' + e.message));
+        }
+      } catch (_) {}
+    })();
+  }, 5 * 60 * 1000).unref();
+
+  // 设置项：打开 Pet 时同时启动 AutoClaw（默认关闭）
+  if (settings.acLaunchOnStart) {
+    log('[proc] 设置项开启：启动时拉起 AutoClaw');
+    try {
+      const exe = ['D:/Program Files/AutoClaw/AutoClaw.exe',
+        path.join(process.env.ProgramFiles || 'C:/Program Files', 'AutoClaw', 'AutoClaw.exe'),
+        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw', 'AutoClaw.exe')]
+        .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
+      if (exe) spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      else log('[proc] 未找到 AutoClaw.exe，跳过拉起');
+    } catch (e) {
+      log('[proc] 拉起 AutoClaw 异常: ' + e.message);
+    }
+  }
 
   // 桌面版：宠物/面板由 Rust 桌面客户端承载，不再向 TraeWork 注入 JS。
   // 仅保留 TraeWork 进程管理（账号切换时重启以生效），避免开机自动拉起。

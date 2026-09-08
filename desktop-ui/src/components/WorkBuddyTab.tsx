@@ -29,6 +29,7 @@ export default function WorkBuddyTab({
   onLaunch,
   onLaunchCli,
   refreshTick = 0,
+  active = false,
 }: {
   showPhone: boolean;
   kind?: ClientKind;
@@ -36,6 +37,8 @@ export default function WorkBuddyTab({
   onLaunch?: (force?: boolean) => Promise<void> | void;
   onLaunchCli?: () => Promise<void> | void;
   refreshTick?: number;
+  /// 当前 Tab 是否被选中：切到时静默刷新积分（不清空页面、不显示加载态）
+  active?: boolean;
 }) {
   const [accounts, setAccounts] = useState<ClientAccount[] | null>(null);
   const [currentUid, setCurrentUid] = useState<string | null>(null);
@@ -47,8 +50,26 @@ export default function WorkBuddyTab({
   const [armed, setArmed] = useState<Record<string, boolean>>({});
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
   const [restartArmed, setRestartArmed] = useState(false);
-  const creditsLoadedRef = useRef<Set<string>>(new Set());
   const accountsRef = useRef<ClientAccount[] | null>(null);
+  // 积分缓存镜像（ref 便于轮询时判断哪些 uid 还没加载/失败需重试）
+  const creditsRef = useRef<Record<string, ClientCredits | "loading" | "error">>({});
+  const setOneCredit = useCallback((uid: string, v: ClientCredits | "loading" | "error") => {
+    creditsRef.current = { ...creditsRef.current, [uid]: v };
+    setCredits(creditsRef.current);
+  }, []);
+  // 每账号积分懒加载（串行，避免瞬时请求过密）；失败保留 error 位 → 轮询自动重试
+  const loadCredits = useCallback(async (list: ClientAccount[]) => {
+    for (const a of list) {
+      const cur = creditsRef.current[a.uid];
+      if (cur !== undefined && cur !== "error") continue;
+      if (cur === undefined) setOneCredit(a.uid, "loading");
+      try {
+        setOneCredit(a.uid, await clientCredits(kind, a.uid));
+      } catch {
+        setOneCredit(a.uid, "error");
+      }
+    }
+  }, [kind, setOneCredit]);
 
   const load = useCallback(async (withClaim: boolean) => {
     try {
@@ -68,7 +89,7 @@ export default function WorkBuddyTab({
   // 手动刷新（⚡ 刷新数据）：清空积分缓存并重拉账号
   useEffect(() => {
     if (refreshTick > 0) {
-      creditsLoadedRef.current.clear();
+      creditsRef.current = {};
       setCredits({});
       void load(false);
     }
@@ -87,6 +108,9 @@ export default function WorkBuddyTab({
       if (msg.includes("CB_RUNNING_NO_CDP")) {
         setRestartArmed(true);
         setLaunchMsg("CodeBuddy 正在运行（未开调试端口）。再点一次「确认重启」将关闭它并以注入模式重启。");
+      } else if (msg.includes("AC_RUNNING_NO_CDP")) {
+        setRestartArmed(true);
+        setLaunchMsg("AutoClaw 正在运行（未开调试端口）。再点一次「确认重启」将关闭它并以注入模式重启。");
       } else {
         setLaunchMsg(msg);
       }
@@ -116,6 +140,8 @@ export default function WorkBuddyTab({
         // 批量进行中、或签到状态还没拿到（批量期间接口返回 null）时，立即刷新
         const missing = accountsRef.current?.some((a) => a.checkin == null);
         if (running || missing) await load(false);
+        // 积分加载失败/缺失的账号自动重试（daemon 瞬时不可用后自愈，无需手动刷新）
+        if (accountsRef.current) void loadCredits(accountsRef.current);
       } catch {
         // daemon 可能刚被 ensure 拉起：静默重读一次，成功即自动恢复显示
         // （/api/client/:id/accounts 本身会触发自动签到，带每日缓存幂等）
@@ -141,21 +167,15 @@ export default function WorkBuddyTab({
   const accountsKey = accounts?.map((a) => a.uid).join(",") ?? "";
   useEffect(() => {
     if (!accounts) return;
-    void (async () => {
-      for (const a of accounts) {
-        if (creditsLoadedRef.current.has(a.uid)) continue;
-        creditsLoadedRef.current.add(a.uid);
-        setCredits((c) => ({ ...c, [a.uid]: "loading" }));
-        try {
-          const v = await clientCredits(kind, a.uid);
-          setCredits((c) => ({ ...c, [a.uid]: v }));
-        } catch {
-          setCredits((c) => ({ ...c, [a.uid]: "error" }));
-        }
-      }
-    })();
+    void loadCredits(accounts);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountsKey]);
+
+  // 切到本 Tab 时静默刷新积分：不重新拉账号列表、不显示加载态，旧积分先保持显示，新的到了直接替换
+  useEffect(() => {
+    if (active && accountsRef.current) void loadCredits(accountsRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const doDelete = async (uid: string) => {
     const key = `del:${uid}`;
@@ -179,12 +199,10 @@ export default function WorkBuddyTab({
     });
     try {
       await clientDelete(kind, uid);
-      creditsLoadedRef.current.delete(uid);
-      setCredits((c) => {
-        const n = { ...c };
-        delete n[uid];
-        return n;
-      });
+      const after = { ...creditsRef.current };
+      delete after[uid];
+      creditsRef.current = after;
+      setCredits(after);
       await load(false);
     } catch {
       setSwitchedMsg("删除失败，当前登录账号不能删除");
