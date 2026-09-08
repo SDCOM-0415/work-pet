@@ -233,15 +233,16 @@ export default function App() {
         .then(() => refreshAll(false))
         .catch(() => {});
 
-      // 启动时静默检查一次 GitHub 更新
+      // 启动时静默检查一次 GitHub 更新；成功时无论是否有新版都记录结果，
+      // 失败时清空（保留旧值会导致拿到过一次结果后永不重试）
       checkUpdate()
         .then((info) => {
+          setUpdateInfo(info);
           if (info && info.hasUpdate) {
-            setUpdateInfo(info);
             showBubble(`🎉 发现新版本 ${info.latestVersion}，点击「关于」查看更新`, 5000);
           }
         })
-        .catch(() => {});
+        .catch(() => setUpdateInfo(null));
     }
   }, [bootstrap, refreshAll, showBubble]);
 

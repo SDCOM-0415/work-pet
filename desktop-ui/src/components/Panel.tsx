@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { checkUpdate } from "@/api";
 import {
   Info,
   Settings,
@@ -782,6 +783,23 @@ function SettingsTab({
 /* ---------------- 关于 Tab ---------------- */
 
 function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
+  const [checkMsg, setCheckMsg] = useState<string | null>(null);
+  // 每次打开「关于」页都重新向 daemon 检查一次更新（失败静默，不打扰）
+  useEffect(() => {
+    let stop = false;
+    checkUpdate()
+      .then((info) => {
+        if (stop) return;
+        setCheckMsg(info && info.hasUpdate ? `发现新版 ${info.latestVersion}` : "已是最新版本");
+      })
+      .catch(() => {
+        if (!stop) setCheckMsg("检查更新失败（可稍后重试）");
+      });
+    return () => {
+      stop = true;
+    };
+  }, []);
+
   return (
     <ScrollArea className="h-full w-full pr-1">
       <div className="flex flex-col items-center justify-center gap-2.5 px-2 py-1 text-center">
@@ -794,7 +812,7 @@ function AboutTab({ updateInfo }: { updateInfo?: UpdateInfo | null }) {
               发现新版 {updateInfo.latestVersion}
             </Badge>
           ) : (
-            <span className="text-[10px] text-muted-foreground/60">(最新)</span>
+            <span className="text-[10px] text-muted-foreground/60">{checkMsg ?? "(检查中…)"}</span>
           )}
         </div>
 

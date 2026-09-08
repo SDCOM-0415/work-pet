@@ -370,7 +370,7 @@ function postJson(url, body, headers) {
   });
 }
 
-function getJson(url, headers) {
+function getJson(url, headers, redirects) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https:') ? require('https') : require('http');
     const u = new URL(url);
@@ -382,6 +382,12 @@ function getJson(url, headers) {
       headers: Object.assign({ Accept: 'application/json', 'User-Agent': 'WorkPet-Desktop' }, headers || {}),
       timeout: 8000,
     }, (res) => {
+      // 跟随 3xx 重定向（GitHub 仓库改名的 301 会指向新地址），最多 5 跳
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers && res.headers.location) {
+        res.destroy(new Error('redirect'));
+        if ((redirects || 0) >= 5) return reject(new Error('重定向次数过多'));
+        return resolve(getJson(new URL(res.headers.location, url).toString(), headers, (redirects || 0) + 1));
+      }
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
