@@ -115,6 +115,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           BASE="src-tauri/target/universal-apple-darwin/release/bundle"
           APP="$BASE/macos/WorkPet.app"
           MAIN="$APP/Contents/MacOS/work-pet"
@@ -123,23 +124,30 @@ jobs:
           test -f "$MAIN"
           file "$MAIN"
           lipo -info "$MAIN"
-          lipo -verify_arch x86_64 arm64 "$MAIN"
+          lipo "$MAIN" -verify_arch x86_64 arm64
 
           NODE=""
           for p in \
             "$APP/Contents/Resources/binaries/node" \
             "$APP/Contents/Resources/node"; do
-            if [ -f "$p" ]; then NODE="$p"; break; fi
+            if [ -f "$p" ]; then
+              NODE="$p"
+              break
+            fi
           done
+
           test -n "$NODE"
+
           echo "=== Bundled Node ==="
           file "$NODE"
           lipo -info "$NODE"
-          lipo -verify_arch x86_64 arm64 "$NODE"
+          lipo "$NODE" -verify_arch x86_64 arm64
           "$NODE" --version
 
           echo "=== Bundled scripts ==="
-          find "$APP/Contents/Resources" -maxdepth 3 -type f \( -name daemon.js -o -name credit-segments.js \) -print
+          find "$APP/Contents/Resources" -maxdepth 3 -type f \
+            \( -name daemon.js -o -name credit-segments.js \) -print
+
           find "$APP/Contents/Resources" -type f -name daemon.js | grep -q .
           find "$APP/Contents/Resources" -type f -name credit-segments.js | grep -q .
 
