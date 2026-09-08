@@ -49,22 +49,26 @@ const DATA_DIR_CANDIDATES = [
 
 function detectPaths() {
   const exe = EXE_CANDIDATES.find((f) => f && fs.existsSync(f)) || '';
-  let dataDir = DATA_DIR_CANDIDATES.find((d) => d && fs.existsSync(d)) || '';
-  if (!dataDir) {
-    // 兜底：在 Roaming 下找含 storage.json 且带 iCubeAuthInfo 的 Trae 目录
-    const roam = path.join(os.homedir(), 'AppData', 'Roaming');
+  // 优先挑「storage.json 里带 iCubeAuthInfo（当前已登录）」的 Trae 目录，
+  // 避免装了两个 Trae（如 Trae CN 已登录、TRAE SOLO CN 已登出）时读到无登录态的目录。
+  const roam = path.join(os.homedir(), 'AppData', 'Roaming');
+  const scanDirs = [...DATA_DIR_CANDIDATES];
+  try {
+    for (const name of fs.readdirSync(roam)) {
+      if (/trae/i.test(name)) scanDirs.push(path.join(roam, name));
+    }
+  } catch (_) {}
+  let dataDir = '';
+  for (const d of scanDirs) {
+    if (!d || !fs.existsSync(d)) continue;
+    const storage = path.join(d, 'User', 'globalStorage', 'storage.json');
+    if (!fs.existsSync(storage)) continue;
     try {
-      for (const name of fs.readdirSync(roam)) {
-        if (!/trae/i.test(name)) continue;
-        const storage = path.join(roam, name, 'User', 'globalStorage', 'storage.json');
-        if (!fs.existsSync(storage)) continue;
-        try {
-          const raw = fs.readFileSync(storage, 'utf8');
-          if (raw.includes('iCubeAuthInfo://')) { dataDir = path.join(roam, name); break; }
-        } catch (_) {}
-      }
+      if (fs.readFileSync(storage, 'utf8').includes('iCubeAuthInfo://')) { dataDir = d; break; }
     } catch (_) {}
   }
+  // 都没有登录态时退回第一个存在的目录（后续 getAuth 会给出明确错误）
+  if (!dataDir) dataDir = DATA_DIR_CANDIDATES.find((d) => d && fs.existsSync(d)) || '';
   return { exe, dataDir };
 }
 

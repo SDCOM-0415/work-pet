@@ -265,7 +265,11 @@ export default function Panel(p: PanelProps) {
         <div className="px-1 py-2 text-xs">
           <p className="text-destructive">{p.error}</p>
           <p className="mt-1 text-muted-foreground">
-            启动失败：请确认已安装 Node.js，或重启桌面客户端重试
+            {/iCubeAuthInfo|未找到|登录态/i.test(p.error)
+              ? "TraeWork 未登录或登录态已失效：请先打开 TraeWork 客户端登录，再点 ⚡ 刷新"
+              : /daemon 未连接|后台服务|node/i.test(p.error)
+                ? "后台服务未正常运行：请重启 Work Pet 重试"
+                : "请确认后台服务正常运行，或重启桌面客户端重试"}
           </p>
         </div>
       ) : p.loading && !p.status ? (
