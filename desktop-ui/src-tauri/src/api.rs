@@ -26,6 +26,16 @@ fn pet_token() -> Option<String> {
     if let Ok(appdata) = std::env::var("APPDATA") {
         candidates.push(Path::new(&appdata).join("WorkPet").join(".api-token"));
     }
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(
+            Path::new(&home)
+                .join("Library")
+                .join("Application Support")
+                .join("WorkPet")
+                .join(".api-token"),
+        );
+    }
 
     for path in candidates {
         if let Ok(t) = std::fs::read_to_string(&path) {
@@ -251,7 +261,17 @@ fn spawn_daemon() -> Result<(), String> {
 
     let mut cmd = std::process::Command::new(node);
     cmd.arg(&daemon);
-    // 便携数据目录：账号备份/设置/积分缓存存到 exe 同目录（不写 C 盘 AppData）
+    // 数据目录：Windows 保持便携模式；macOS 不写 .app 包，使用 Application Support。
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        let data_dir = Path::new(&home)
+            .join("Library")
+            .join("Application Support")
+            .join("WorkPet");
+        let _ = std::fs::create_dir_all(&data_dir);
+        cmd.env("WORKPET_DATA_DIR", &data_dir);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(exe_dir) = std::env::current_exe()
         .ok()
         .as_ref()
@@ -286,7 +306,7 @@ pub fn ensure_daemon() -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(800));
     }
-    Err("后台服务启动超时，请确认已安装 Node.js".to_string())
+    Err("后台服务启动超时：内置 Node 或 daemon.js 启动失败".to_string())
 }
 
 /// 发送请求终止本地常驻 daemon（避免安装更新时 node.exe 被锁定）

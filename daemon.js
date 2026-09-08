@@ -20,7 +20,9 @@ const path = require('path');
 const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
+
+const isMac = process.platform === 'darwin';
 
 const APP_BRAND = 'TraeWork';
 const DAEMON_VERSION = '1.0.0';
@@ -35,36 +37,75 @@ const CHECKIN_PATH = '/trae/api/v2/ug/checkin_credits/';
 const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
 
 // ---------------- 路径探测 ----------------
-const EXE_CANDIDATES = [
-  'D:/Program Files/TRAE SOLO CN/TRAE SOLO CN.exe',
-  path.join(process.env.ProgramFiles || 'C:/Program Files', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-  path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-  path.join(process.env.LOCALAPPDATA || '', 'Programs', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-];
-const DATA_DIR_CANDIDATES = [
-  path.join(os.homedir(), 'AppData', 'Roaming', 'TRAE SOLO CN'),
-  path.join(os.homedir(), 'AppData', 'Roaming', 'TraeWork'),
-];
+const USER_DATA_ROOT = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support')
+  : path.join(os.homedir(), 'AppData', 'Roaming');
 
-function detectPaths() {
-  const exe = EXE_CANDIDATES.find((f) => f && fs.existsSync(f)) || '';
-  let dataDir = DATA_DIR_CANDIDATES.find((d) => d && fs.existsSync(d)) || '';
-  if (!dataDir) {
-    // 兜底：在 Roaming 下找含 storage.json 且带 iCubeAuthInfo 的 Trae 目录
-    const roam = path.join(os.homedir(), 'AppData', 'Roaming');
-    try {
-      for (const name of fs.readdirSync(roam)) {
-        if (!/trae/i.test(name)) continue;
-        const storage = path.join(roam, name, 'User', 'globalStorage', 'storage.json');
-        if (!fs.existsSync(storage)) continue;
+const EXE_CANDIDATES = isMac
+  ? [
+      '/Applications/TRAE SOLO CN.app/Contents/MacOS/TRAE SOLO CN',
+      '/Applications/Trae CN.app/Contents/MacOS/Trae CN',
+      '/Applications/Trae.app/Contents/MacOS/Trae',
+      path.join(os.homedir(), 'Applications', 'TRAE SOLO CN.app', 'Contents', 'MacOS', 'TRAE SOLO CN'),
+      path.join(os.homedir(), 'Applications', 'Trae CN.app', 'Contents', 'MacOS', 'Trae CN'),
+      path.join(os.homedir(), 'Applications', 'Trae.app', 'Contents', 'MacOS', 'Trae'),
+    ]
+  : [
+      'D:/Program Files/TRAE SOLO CN/TRAE SOLO CN.exe',
+      path.join(process.env.ProgramFiles || 'C:/Program Files', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
+    ];
+
+const DATA_DIR_CANDIDATES = ['TRAE SOLO CN', 'Trae CN', 'TraeWork', 'Trae']
+  .map((name) => path.join(USER_DATA_ROOT, name));
+
+function findTraeDataDir() {
+  const direct = DATA_DIR_CANDIDATES.find((d) => fs.existsSync(path.join(d, 'User', 'globalStorage', 'storage.json')));
+  if (direct) return direct;
+
+  // 兜底：扫描当前平台的用户数据根目录，寻找包含 Trae 登录态的 storage.json。
+  try {
+    for (const name of fs.readdirSync(USER_DATA_ROOT)) {
+      if (!/trae/i.test(name)) continue;
+      const dir = path.join(USER_DATA_ROOT, name);
+      const storage = path.join(dir, 'User', 'globalStorage', 'storage.json');
+      if (!fs.existsSync(storage)) continue;
+      try {
+        const raw = fs.readFileSync(storage, 'utf8');
+        if (raw.includes('iCubeAuthInfo://')) return dir;
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return '';
+}
+
+function findTraeExecutable() {
+  const direct = EXE_CANDIDATES.find((f) => f && fs.existsSync(f));
+  if (direct) return direct;
+  if (!isMac) return '';
+
+  // macOS 兜底：扫描 /Applications 和 ~/Applications 中名称含 Trae 的 .app。
+  for (const root of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+    let apps = [];
+    try { apps = fs.readdirSync(root).filter((n) => /trae/i.test(n) && n.endsWith('.app')); } catch (_) {}
+    for (const app of apps) {
+      const macosDir = path.join(root, app, 'Contents', 'MacOS');
+      let bins = [];
+      try { bins = fs.readdirSync(macosDir); } catch (_) {}
+      for (const bin of bins) {
+        const full = path.join(macosDir, bin);
         try {
-          const raw = fs.readFileSync(storage, 'utf8');
-          if (raw.includes('iCubeAuthInfo://')) { dataDir = path.join(roam, name); break; }
+          if (fs.statSync(full).isFile()) return full;
         } catch (_) {}
       }
-    } catch (_) {}
+    }
   }
-  return { exe, dataDir };
+  return '';
+}
+
+function detectPaths() {
+  return { exe: findTraeExecutable(), dataDir: findTraeDataDir() };
 }
 
 let CFG = { exe: '', dataDir: '' };
@@ -241,7 +282,7 @@ function backupCurrentAccount() {
  * 都能显示」。只读别的客户端 storage，绝不写回别人。
  */
 function collectAllTraeAccounts() {
-  const roam = path.join(os.homedir(), 'AppData', 'Roaming');
+  const roam = USER_DATA_ROOT;
   let dirs = [];
   try { dirs = fs.readdirSync(roam).filter((n) => /trae/i.test(n)); } catch (_) {}
   const saved = [];
@@ -563,10 +604,16 @@ async function claimViaApp(timeoutMs = 150000) {
 // 恢复时写回各自位置即可在新电脑上使用。
 // WB/CB 账号备份目录：WorkPet 自有目录。旧版曾借用 WorkDaddy 目录存放，
 // 首次运行把旧目录文件搬迁过来（只读复制，旧目录原样保留）。
-const SHARED_DATA_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkPet', 'clients');
+const APP_DATA_ROOT = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support')
+  : (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'));
+const LOCAL_DATA_ROOT = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support')
+  : (process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'));
+const SHARED_DATA_DIR = path.join(APP_DATA_ROOT, 'WorkPet', 'clients');
 const WB_ACCOUNTS_DIR = path.join(SHARED_DATA_DIR, 'accounts');
 const CB_ACCOUNTS_DIR = path.join(SHARED_DATA_DIR, 'profiles', 'codebuddy-cn', 'accounts');
-const LEGACY_SHARED_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkDaddy');
+const LEGACY_SHARED_DIR = path.join(APP_DATA_ROOT, 'WorkDaddy');
 function migrateLegacySharedDir(rel) {
   try {
     const dstDir = path.join(SHARED_DATA_DIR, rel);
@@ -582,7 +629,7 @@ function migrateLegacySharedDir(rel) {
 }
 migrateLegacySharedDir('accounts');
 migrateLegacySharedDir(path.join('profiles', 'codebuddy-cn', 'accounts'));
-const EXT_AUTH_DIR = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+const EXT_AUTH_DIR = path.join(LOCAL_DATA_ROOT, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
 const WB_AUTH_FILE = path.join(EXT_AUTH_DIR, 'workbuddy-desktop.info');
 const CB_AUTH_FILE = path.join(EXT_AUTH_DIR, 'Tencent-Cloud.coding-copilot.info');
 
@@ -1775,11 +1822,11 @@ const EXE_NAME = isMac
 function isProcessRunning() {
   if (isMac) {
     try {
-      const out = execSync(['pgrep', '-x', 'Electron']);
+      const out = execFileSync('pgrep', ['-x', 'Electron'], { encoding: 'utf8' });
       if (!out.trim()) return false;
       for (const pid of out.trim().split(/\s+/)) {
         try {
-          const args = execSync(['ps', '-p', pid.trim(), '-o', 'command=']);
+          const args = execFileSync('ps', ['-p', pid.trim(), '-o', 'command='], { encoding: 'utf8' });
           if (args.includes('TRAE SOLO CN') || args.includes('Trae CN') || args.includes('TraeWork')) return true;
         } catch (_) {}
       }
@@ -1787,17 +1834,17 @@ function isProcessRunning() {
     } catch (_) { return false; }
   }
   try {
-    const out = execSync(['tasklist', '/FI', 'IMAGENAME eq ' + EXE_NAME, '/FO', 'CSV', '/NH'], { encoding: 'utf8' });
+    const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq ' + EXE_NAME, '/FO', 'CSV', '/NH'], { encoding: 'utf8' });
     return out.includes(EXE_NAME);
   } catch (_) { return false; }
 }
 
 function killTraeWork() {
   if (isMac) {
-    try { execSync(['osascript', '-e', 'quit app "TRAE SOLO CN"']); } catch (_) {}
-    try { execSync(['osascript', '-e', 'quit app "Trae CN"']); } catch (_) {}
+    try { execFileSync('osascript', ['-e', 'quit app \"TRAE SOLO CN\"'], { stdio: 'ignore' }); } catch (_) {}
+    try { execFileSync('osascript', ['-e', 'quit app \"Trae CN\"'], { stdio: 'ignore' }); } catch (_) {}
   } else {
-    try { execSync(['taskkill', '/IM', EXE_NAME, '/F', '/T'], { stdio: 'ignore' }); } catch (_) {}
+    try { execFileSync('taskkill', ['/IM', EXE_NAME, '/F', '/T'], { stdio: 'ignore' }); } catch (_) {}
   }
 }
 
@@ -1836,25 +1883,37 @@ async function ensureTraeWorkWithCdp() {
 // ---------------- 主流程 ----------------
 async function main() {
   CFG = detectPaths();
-  if (!CFG.dataDir) { log('未找到 TraeWork 数据目录，退出'); process.exit(1); }
-  if (!CFG.exe) log('警告：未找到 TraeWork 可执行文件（仅本地 API 可用）');
-  log('dataDir=' + CFG.dataDir + ' exe=' + (CFG.exe || '(未找到)'));
-  const auth = getAuth();
-  if (auth.error) log('[auth] ' + auth.error);
-  else log('[auth] user=' + auth.userId + ' scope=' + ((auth.account && auth.account.scope) || '?') + ' deviceId=' + auth.deviceId);
-  // 每次启动自动备份当前登录账号，保证多账号列表始终包含正在用的账号
-  try {
-    const r = backupCurrentAccount();
-    log('[accounts] 已备份当前账号 ' + r.nickname + ' (' + r.uid + ')');
-  } catch (e) {
-    log('[accounts] 备份当前账号失败: ' + e.message);
+  if (!CFG.dataDir) {
+    // WorkPet 还承载 WorkBuddy / CodeBuddy；没有安装或登录 TraeWork 时也必须启动本地 API。
+    log('警告：未找到 TraeWork 数据目录，TraeWork 功能暂不可用（WorkBuddy / CodeBuddy 仍可使用）');
   }
-  // 跨客户端收集：把其它 Trae 客户端（如 Trae CN）里已登录的账号也并入备份库
-  try {
-    const extra = collectAllTraeAccounts();
-    if (extra.length) log('[accounts] 跨客户端收集账号: ' + extra.join(', '));
-  } catch (e) {
-    log('[accounts] 跨客户端收集失败: ' + e.message);
+  if (!CFG.exe) log('警告：未找到 TraeWork 可执行文件（仅本地 API 和其它客户端功能可用）');
+  log('dataDir=' + (CFG.dataDir || '(未找到)') + ' exe=' + (CFG.exe || '(未找到)'));
+
+  if (CFG.dataDir) {
+    try {
+      const auth = getAuth();
+      if (auth.error) log('[auth] ' + auth.error);
+      else log('[auth] user=' + auth.userId + ' scope=' + ((auth.account && auth.account.scope) || '?') + ' deviceId=' + auth.deviceId);
+    } catch (e) {
+      log('[auth] 读取 TraeWork 登录态失败: ' + e.message);
+    }
+
+    // 每次启动自动备份当前登录账号，保证多账号列表始终包含正在用的账号
+    try {
+      const r = backupCurrentAccount();
+      log('[accounts] 已备份当前账号 ' + r.nickname + ' (' + r.uid + ')');
+    } catch (e) {
+      log('[accounts] 备份当前账号失败: ' + e.message);
+    }
+
+    // 跨客户端收集：把其它 Trae 客户端（如 Trae CN）里已登录的账号也并入备份库
+    try {
+      const extra = collectAllTraeAccounts();
+      if (extra.length) log('[accounts] 跨客户端收集账号: ' + extra.join(', '));
+    } catch (e) {
+      log('[accounts] 跨客户端收集失败: ' + e.message);
+    }
   }
 
   server.on('error', (e) => {
