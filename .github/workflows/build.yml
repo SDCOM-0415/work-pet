@@ -110,74 +110,74 @@ jobs:
         working-directory: desktop-ui
         run: npx tauri build --target universal-apple-darwin --bundles app,dmg
 
-    - name: Verify Universal app and bundled Node
-      working-directory: desktop-ui
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        BASE="src-tauri/target/universal-apple-darwin/release/bundle"
-        APP="$BASE/macos/WorkPet.app"
-
-        echo "=== App bundle ==="
-        test -d "$APP"
-        ls -la "$APP/Contents/MacOS"
-
-        EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy \
-          -c "Print :CFBundleExecutable" \
-          "$APP/Contents/Info.plist")
-
-        MAIN="$APP/Contents/MacOS/$EXECUTABLE_NAME"
-
-        echo "=== WorkPet executable ==="
-        echo "CFBundleExecutable: $EXECUTABLE_NAME"
-        echo "Executable path: $MAIN"
-
-        test -f "$MAIN"
-        file "$MAIN"
-        lipo -info "$MAIN"
-        lipo "$MAIN" -verify_arch x86_64 arm64
-
-        NODE=""
-        for p in \
-          "$APP/Contents/Resources/binaries/node" \
-          "$APP/Contents/Resources/node"; do
-          if [ -f "$p" ]; then
-            NODE="$p"
-            break
+      - name: Verify Universal app and bundled Node
+        working-directory: desktop-ui
+        shell: bash
+        run: |
+          set -euo pipefail
+  
+          BASE="src-tauri/target/universal-apple-darwin/release/bundle"
+          APP="$BASE/macos/WorkPet.app"
+  
+          echo "=== App bundle ==="
+          test -d "$APP"
+          ls -la "$APP/Contents/MacOS"
+  
+          EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy \
+            -c "Print :CFBundleExecutable" \
+            "$APP/Contents/Info.plist")
+  
+          MAIN="$APP/Contents/MacOS/$EXECUTABLE_NAME"
+  
+          echo "=== WorkPet executable ==="
+          echo "CFBundleExecutable: $EXECUTABLE_NAME"
+          echo "Executable path: $MAIN"
+  
+          test -f "$MAIN"
+          file "$MAIN"
+          lipo -info "$MAIN"
+          lipo "$MAIN" -verify_arch x86_64 arm64
+  
+          NODE=""
+          for p in \
+            "$APP/Contents/Resources/binaries/node" \
+            "$APP/Contents/Resources/node"; do
+            if [ -f "$p" ]; then
+              NODE="$p"
+              break
+            fi
+          done
+  
+          if [ -z "$NODE" ]; then
+            echo "ERROR: bundled Node.js not found"
+            echo "=== Resources ==="
+            find "$APP/Contents/Resources" -maxdepth 4 -type f -print
+            exit 1
           fi
-        done
-
-        if [ -z "$NODE" ]; then
-          echo "ERROR: bundled Node.js not found"
-          echo "=== Resources ==="
-          find "$APP/Contents/Resources" -maxdepth 4 -type f -print
-          exit 1
-        fi
-
-        echo "=== Bundled Node ==="
-        echo "Node path: $NODE"
-        file "$NODE"
-        lipo -info "$NODE"
-        lipo "$NODE" -verify_arch x86_64 arm64
-        "$NODE" --version
-
-        echo "=== Bundled scripts ==="
-        find "$APP/Contents/Resources" -maxdepth 4 -type f \
-          \( -name daemon.js -o -name credit-segments.js \) -print
-
-        if ! find "$APP/Contents/Resources" -type f -name daemon.js | grep -q .; then
-          echo "ERROR: daemon.js not found"
-          exit 1
-        fi
-
-        if ! find "$APP/Contents/Resources" -type f -name credit-segments.js | grep -q .; then
-          echo "ERROR: credit-segments.js not found"
-          exit 1
-        fi
-
-        echo "=== DMG ==="
-        ls -lh "$BASE/dmg/"*.dmg
+  
+          echo "=== Bundled Node ==="
+          echo "Node path: $NODE"
+          file "$NODE"
+          lipo -info "$NODE"
+          lipo "$NODE" -verify_arch x86_64 arm64
+          "$NODE" --version
+  
+          echo "=== Bundled scripts ==="
+          find "$APP/Contents/Resources" -maxdepth 4 -type f \
+            \( -name daemon.js -o -name credit-segments.js \) -print
+  
+          if ! find "$APP/Contents/Resources" -type f -name daemon.js | grep -q .; then
+            echo "ERROR: daemon.js not found"
+            exit 1
+          fi
+  
+          if ! find "$APP/Contents/Resources" -type f -name credit-segments.js | grep -q .; then
+            echo "ERROR: credit-segments.js not found"
+            exit 1
+          fi
+  
+          echo "=== DMG ==="
+          ls -lh "$BASE/dmg/"*.dmg
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
