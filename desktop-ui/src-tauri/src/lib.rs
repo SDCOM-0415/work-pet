@@ -487,15 +487,15 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 单实例保护：已有 work-pet.exe 在运行则直接退出
+    // 单实例保护：已有 workpet.exe 在运行则直接退出
     #[cfg(target_os = "windows")]
     {
         if let Ok(out) = std::process::Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq work-pet.exe", "/FO", "CSV"])
+            .args(["/FI", "IMAGENAME eq workpet.exe", "/FO", "CSV"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
-            if String::from_utf8_lossy(&out.stdout).matches("work-pet.exe").count() > 1 {
+            if String::from_utf8_lossy(&out.stdout).matches("workpet.exe").count() > 1 {
                 eprintln!("[single-instance] 已有实例在运行，退出");
                 std::process::exit(0);
             }

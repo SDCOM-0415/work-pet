@@ -323,8 +323,15 @@ async function switchToAccount(uid) {
   writeAuthSecret(secret);
   log('[switch] 已写回登录态到 storage.json');
   statusCache.at = 0; statusCache.data = null;
+  entCache.at = 0; entCache.data = null;
   await ensureTraeWorkWithCdp(); // 重启 TraeWork 使切换生效；桌面版不再注入
   log('[switch] 已切换账号: ' + nickname);
+  // 切换后重备份一次：宿主重启时可能已刷新登录态（新 token/新有效期），
+  // 把最新的 Cookie 时限同步进账号库，避免面板显示过期日期。
+  try {
+    const r = backupCurrentAccount();
+    log('[switch] 已刷新账号备份 ' + r.nickname + ' (' + r.uid + ')');
+  } catch (e) { log('[switch] 切换后备份失败: ' + e.message); }
   return { uid, nickname };
 }
 
@@ -869,12 +876,12 @@ async function clientDailyCheckin(profileId, accessToken) {
         const already = code === 10001;
         const deviceLimit = /已经签到/.test(o.msg || o.message || '');
         if (already || deviceLimit || (r.ok && (code === 0 || code === undefined))) {
-          return { ok: true, already, deviceLimit, code, message: o.msg || o.message || 'ok' };
+          return { ok: true, already, deviceLimit, code, message: o.msg || o.message || 'ok', body: o };
         }
-        if (r.status === 401) return { ok: false, code, message: '登录身份过期' };
+        if (r.status === 401) return { ok: false, code, message: '登录身份过期', body: o };
         const busy = /请求处理中|重复操作|请稍后再试/.test(o.msg || o.message || '');
         if (busy) { lastErr = o.msg || o.message; break; }
-        if (r.status >= 400 && r.status !== 404) return { ok: false, code, message: 'HTTP ' + r.status };
+        if (r.status >= 400 && r.status !== 404) return { ok: false, code, message: 'HTTP ' + r.status, body: o };
         lastErr = o.msg || o.message || ('HTTP ' + r.status);
       } catch (e) {
         lastErr = e.message;
@@ -883,6 +890,84 @@ async function clientDailyCheckin(profileId, accessToken) {
   }
   }
   return { ok: false, message: lastErr || '签到失败' };
+}
+
+/**
+ * 签到后同步账号的 Cookie 时限（tokenExpiresAt）进账号库：
+ * - 当前登录账号：auth 文件是唯一真相（客户端刷新 token 时会重写该文件），
+ *   立即把 auth.expiresAt / refreshExpiresAt / lastRefreshTime 同步进记录，
+ *   不等 5s 的 watchFile 轮询，切换走之后记录也不会残留旧有效期。
+ * - 其他账号：登录态只有备份库里一份，仅当签到响应明确带「刷新 token + 有效期」
+ *   时才兜底更新，否则保持原值（不臆造有效期）。
+ * 只更新有效期元数据，绝不改写 accessToken，避免写坏登录态。
+ */
+function clientSyncTokenExpiryAfterCheckin(profileId, uid, respBody) {
+  // 各种形态 → 毫秒时间戳（数字秒/毫秒、数字字符串、ISO 日期字符串）
+  const asMs = (v) => {
+    if (v == null) return null;
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v) || v <= 0) return null;
+      return v > 1e12 ? v : v * 1000; // 秒 → 毫秒
+    }
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (!s) return null;
+      if (/^\d+(\.\d+)?$/.test(s)) {
+        const n = Number(s);
+        if (!Number.isFinite(n) || n <= 0) return null;
+        return n > 1e12 ? n : n * 1000;
+      }
+      const ms = Date.parse(s);
+      return Number.isFinite(ms) && ms > 0 ? ms : null;
+    }
+    return null;
+  };
+
+  const store = loadStore();
+  const sec = store[profileId === 'wb' ? 'workbuddy' : 'codebuddy'];
+  const idx = sec.accounts.findIndex((x) => x && x.account && String(x.account.uid) === String(uid));
+  if (idx < 0) return;
+  const rec = sec.accounts[idx];
+  const prevAuth = rec.auth || {};
+  const nextAuth = Object.assign({}, prevAuth);
+
+  // 当前登录账号：以 auth 文件为准
+  const fileRaw = clientReadAuth(profileId);
+  if (fileRaw && fileRaw.auth && String(fileRaw.account.uid) === String(uid)) {
+    const fe = asMs(fileRaw.auth.expiresAt);
+    const fr = asMs(fileRaw.auth.refreshExpiresAt);
+    const fl = asMs(fileRaw.auth.lastRefreshTime);
+    if (fe != null) nextAuth.expiresAt = fe;
+    if (fr != null) nextAuth.refreshExpiresAt = fr;
+    if (fl != null) nextAuth.lastRefreshTime = fl;
+  }
+
+  // 签到响应若带刷新后的 token 及其有效期则兜底更新：
+  // 只认明确的 token 对象（data.token / data.tokenInfo / data.auth，或顶层带 accessToken），
+  // 避免把积分包到期时间之类的字段误当成 Cookie 时限。
+  if (respBody && typeof respBody === 'object') {
+    const d = (respBody.data && typeof respBody.data === 'object') ? respBody.data : {};
+    const tokenObjs = [d.token, d.tokenInfo, d.auth].filter((t) => t && typeof t === 'object');
+    if (respBody.accessToken || respBody.token) tokenObjs.push(respBody);
+    let exp = null;
+    for (const t of tokenObjs) {
+      exp = asMs(t.expiresAt) ?? asMs(t.expireTime) ?? asMs(t.expiredAt);
+      if (exp != null) break;
+    }
+    if (exp != null && exp > Date.now() && asMs(nextAuth.expiresAt) !== exp) nextAuth.expiresAt = exp;
+  }
+
+  const changed = nextAuth.expiresAt !== prevAuth.expiresAt
+    || nextAuth.refreshExpiresAt !== prevAuth.refreshExpiresAt
+    || nextAuth.lastRefreshTime !== prevAuth.lastRefreshTime;
+  if (!changed) return;
+  sec.accounts[idx] = Object.assign({}, rec, { auth: nextAuth });
+  if (sec.current && sec.current.account && String(sec.current.account.uid) === String(uid)) {
+    sec.current = sec.accounts[idx];
+  }
+  saveStore(store);
+  log('[client:' + profileId + '] ' + (rec.account.nickname || uid) + ' Cookie 时限已同步 -> '
+    + (nextAuth.expiresAt ? new Date(nextAuth.expiresAt).toISOString() : '(无)'));
 }
 
 async function clientClaimDailyForAll(profileId) {
@@ -905,13 +990,18 @@ async function clientClaimDailyForAll(profileId) {
       if (hit && hit.date === today && hit.ok) { st.done++; continue; }
       const tk = clientTokenFor(profileId, a.uid);
       let rec;
+      let respBody = null;
       if (!tk) rec = { date: today, ok: false, code: -1, message: '无 accessToken' };
       else {
         const r = await clientDailyCheckin(profileId, tk);
+        respBody = r.body;
         rec = { date: today, ok: !!r.ok, already: !!r.already, deviceLimit: !!r.deviceLimit, code: r.code, message: r.message || '' };
       }
       cache[a.uid] = rec;
       clientSaveCheckinCache(profileId, cache);
+      // 签到后同步该账号的 Cookie 时限（tokenExpiresAt）：当前登录账号以 auth 文件为准，
+      // 响应带刷新 token 的有效期则兜底更新，账号库不再残留旧的有效期
+      try { clientSyncTokenExpiryAfterCheckin(profileId, a.uid, respBody); } catch (_) {}
       st.done++;
       log('[client:' + profileId + '] ' + a.nickname + ' 签到: ' + (rec.ok ? (rec.already ? '已签' : '成功') : rec.message));
       await sleep(500);
@@ -1137,6 +1227,38 @@ async function rotateAllAccounts({ claim }) {
           }
         }
       }
+
+      // 签到时同步该账号的最新 Cookie 时限：若宿主在 IPC 签到期间刷新过登录态，
+      // storage.json 里的密文会比备份库里的新——连同有效期一并写回账号库，
+      // 保证面板上的「Cookie 时限」始终反映签到那一刻的真实有效期。
+      try {
+        let liveSecret = rec.secret;
+        try {
+          const cur = JSON.parse(fs.readFileSync(storageFile(), 'utf8'))['iCubeAuthInfo://icube.cloudide'];
+          const curInfo = cur ? decodeSecret(cur) : null;
+          if (curInfo && String(curInfo.userId) === String(a.uid)) liveSecret = cur;
+        } catch (_) {}
+        const liveInfo = decodeSecret(liveSecret);
+        if (liveInfo && String(liveInfo.userId) === String(a.uid)) {
+          const meta = accountMetaFromInfo(liveInfo);
+          const store = loadStore();
+          const idx = store.traework.accounts.findIndex((x) => String(x.uid) === String(a.uid));
+          if (idx >= 0) {
+            const prev = store.traework.accounts[idx];
+            const secretChanged = prev.secret !== liveSecret;
+            const metaChanged = prev.expiredAt !== meta.expiredAt || prev.refreshExpiredAt !== meta.refreshExpiredAt
+              || (prev.nickname || '') !== meta.nickname || (prev.mobile || '') !== meta.mobile;
+            if (secretChanged || metaChanged) {
+              store.traework.accounts[idx] = Object.assign({}, prev, meta, { secret: liveSecret });
+              if (secretChanged) store.traework.accounts[idx].backedUpAt = Date.now();
+              saveStore(store);
+              if (meta.expiredAt !== prev.expiredAt) {
+                log(`[rotate] ${item.nickname}: Cookie 时限已同步 -> ${meta.expiredAt || '(无)'}${secretChanged ? '（登录态已刷新）' : ''}`);
+              }
+            }
+          }
+        }
+      } catch (_) { /* 同步失败不影响签到结果 */ }
     } catch (e) { item.msg = e.message || String(e); }
 
     results.push(item);
@@ -1607,7 +1729,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/check-update') {
       try {
-        const gh = await getJson('https://api.github.com/repos/connoryang331/work-pet/releases/latest');
+        const gh = await getJson('https://api.github.com/repos/connoryang331/workpet/releases/latest');
         if (gh.status === 200 && gh.body) {
           const latestTag = String(gh.body.tag_name || '').trim();
           const currentTag = 'v1.0.0';
@@ -1618,7 +1740,7 @@ const server = http.createServer(async (req, res) => {
             currentVersion: currentTag,
             latestVersion: latestTag || currentTag,
             title: gh.body.name || latestTag,
-            url: gh.body.html_url || 'https://github.com/connoryang331/work-pet/releases/latest',
+            url: gh.body.html_url || 'https://github.com/connoryang331/workpet/releases/latest',
             publishedAt: gh.body.published_at || '',
           });
         }
@@ -1823,7 +1945,6 @@ async function main() {
   } catch (e) {
     log('[accounts] 备份当前账号失败: ' + e.message);
   }
-  // 跨客户端收集：把其它 Trae 客户端（如 Trae CN）里已登录的账号也并入备份库
   try {
     const extra = collectAllTraeAccounts();
     if (extra.length) log('[accounts] 跨客户端收集账号: ' + extra.join(', '));
@@ -1850,12 +1971,36 @@ async function main() {
       .catch((e) => log('[proc] 拉起 TraeWork 异常: ' + e.message));
   }
 
-  // 每 30 分钟刷新一次各账号积分/签到状态（仅在 TraeWork 未运行时轮换，避免打断）
+  // 每 30 分钟刷新一次各账号积分/签到状态（仅在 TraeWork 未运行时轮换，避免打断）；
+  // 轮换时顺带把各账号最新的 Cookie 时限同步进账号库（rotateAllAccounts 内实现）。
   setInterval(() => {
     if (claimAllJob.running || isProcessRunning()) return;
     log('[credits] 定时刷新各账号积分');
     void refreshCreditsOnly().catch((e) => log('[credits] 刷新异常: ' + e.message));
   }, 30 * 60 * 1000).unref();
+
+  // 每 5 分钟把 storage.json 里当前登录的 Cookie 时限同步进账号库（仅更新元数据，
+  // 不写登录文件、不碰宿主），让「Cookie 时限」跟随宿主自动续期保持新鲜。
+  setInterval(() => {
+    if (claimAllJob.running || isProcessRunning()) return; // 宿主运行中不写库，防竞态覆盖
+    try {
+      const auth = getAuth();
+      if (auth.error) return;
+      const meta = accountMetaFromInfo(auth.info);
+      if (!meta.uid) return;
+      const store = loadStore();
+      const idx = store.traework.accounts.findIndex((x) => String(x.uid) === String(meta.uid));
+      if (idx < 0) return; // 只更新已备份账号，不新增
+      const prev = store.traework.accounts[idx];
+      const changed = prev.expiredAt !== meta.expiredAt || prev.refreshExpiredAt !== meta.refreshExpiredAt
+        || (prev.nickname || '') !== meta.nickname || (prev.mobile || '') !== meta.mobile;
+      if (changed) {
+        store.traework.accounts[idx] = Object.assign({}, prev, meta);
+        saveStore(store);
+        log('[accounts] Cookie 时限已同步 ' + (meta.nickname || meta.uid) + ' -> ' + (meta.expiredAt || '(无)'));
+      }
+    } catch (_) {}
+  }, 5 * 60 * 1000).unref();
 
   // 桌面版：宠物/面板由 Rust 桌面客户端承载，不再向 TraeWork 注入 JS。
   // 仅保留 TraeWork 进程管理（账号切换时重启以生效），避免开机自动拉起。
