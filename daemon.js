@@ -829,7 +829,7 @@ function acDpapiNative(data) {
 function acDpapiViaPowershell(data) {
   return new Promise((resolve, reject) => {
     const inB64 = Buffer.from(data).toString('base64');
-    const ps = `$ProgressPreference='SilentlyContinue'; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${inB64}'), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser))`;
+    const ps = `$ProgressPreference='SilentlyContinue'; Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String('${inB64}'), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser))`;
     const encCmd = Buffer.from(ps, 'utf16le').toString('base64');
     const child = spawn('powershell', ['-NoProfile', '-EncodedCommand', encCmd], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';

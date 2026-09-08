@@ -73,6 +73,7 @@ export default function Panel(p: PanelProps) {
   const [tab, setTab] = useState<Tab>("wb");
   const [tabOrder, setTabOrder] = useState<Tab[]>(["wb", "cb", "ac", "tw"]);
   const dragTabRef = useRef<Tab | null>(null);
+  const tabWheelLockRef = useRef(0);
   const [fontScale, setFontScale] = useState<number>(1);
   const [cbLaunch, setCbLaunch] = useState<boolean>(false);
   const [acLaunch, setAcLaunch] = useState<boolean>(false);
@@ -149,6 +150,17 @@ export default function Panel(p: PanelProps) {
       return arr;
     });
   };
+  const handleTabWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(e.deltaY) < Math.abs(e.deltaX) || Math.abs(e.deltaY) < 1) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now < tabWheelLockRef.current) return;
+    tabWheelLockRef.current = now + 140;
+    const currentIndex = orderedMainTabs.findIndex(({ key }) => key === tab);
+    const start = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = (start + (e.deltaY > 0 ? 1 : -1) + orderedMainTabs.length) % orderedMainTabs.length;
+    setTab(orderedMainTabs[nextIndex].key);
+  };
 
   return (
     <Card
@@ -205,7 +217,12 @@ export default function Panel(p: PanelProps) {
       </div>
 
       {/* Tab 栏：主 Tab 带文字居左，可拖拽调序（自动保存）；设置/关于仅图标居右 */}
-      <div className="flex items-center gap-1">
+      <div className="flex min-w-0 items-center gap-1">
+        <div
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+          onWheel={handleTabWheel}
+          title="在主 Tab 区域滚动可切换 Tab"
+        >
         {orderedMainTabs.map(({ key, label, img }) => (
           <Button
             key={key}
@@ -223,19 +240,20 @@ export default function Panel(p: PanelProps) {
             onClick={() => setTab(key)}
             className={cn(
               tabShowText
-                ? "h-8 cursor-grab gap-1.5 rounded-lg px-3 text-xs font-medium active:cursor-grabbing"
-                : "h-8 w-8 cursor-grab rounded-lg active:cursor-grabbing",
+                ? "h-8 min-w-0 flex-1 cursor-grab gap-1.5 rounded-lg px-1.5 text-xs font-medium active:cursor-grabbing"
+                : "h-8 w-8 shrink-0 cursor-grab rounded-lg active:cursor-grabbing",
               tab === key
                 ? "bg-primary text-primary-foreground hover:bg-primary"
                 : "text-foreground/70 hover:bg-muted hover:text-foreground"
             )}
             title={tabShowText ? `${label}（拖拽调整顺序）` : `${label}（拖拽调整顺序；设置里可显示文字）`}
           >
-            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5" />
-            {tabShowText && label}
+            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0" />
+            {tabShowText && <span className="min-w-0 truncate">{label}</span>}
           </Button>
         ))}
-        <div className="ml-auto flex items-center gap-0.5">
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           {ICON_TABS.map(({ key, label, icon: Icon }) => (
             <Button
               key={key}
