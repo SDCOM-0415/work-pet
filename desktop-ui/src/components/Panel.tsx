@@ -261,23 +261,17 @@ export default function Panel(p: PanelProps) {
 
       {p.bootstrap !== "ready" ? (
         <BootstrapNotice bootstrap={p.bootstrap} bootError={p.bootError} />
-      ) : p.error && !p.status ? (
-        <div className="px-1 py-2 text-xs">
-          <p className="text-destructive">{p.error}</p>
-          <p className="mt-1 text-muted-foreground">
-            {/iCubeAuthInfo|未找到|登录态/i.test(p.error)
-              ? "TraeWork 未登录或登录态已失效：请先打开 TraeWork 客户端登录，再点 ⚡ 刷新"
-              : /daemon 未连接|后台服务|node/i.test(p.error)
-                ? "后台服务未正常运行：请重启 Work Pet 重试"
-                : "请确认后台服务正常运行，或重启桌面客户端重试"}
-          </p>
-        </div>
-      ) : p.loading && !p.status ? (
+      ) : p.error && !p.status && tab === "tw" && p.accounts.length === 0 ? (
+        <StatusErrorNotice error={p.error} />
+      ) : p.loading && !p.status && tab === "tw" ? (
         <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 读取签到状态…
         </div>
       ) : (
         <>
+          {tab === "tw" && p.error && !p.status && p.accounts.length > 0 && (
+            <StatusErrorNotice error={p.error} compact />
+          )}
           {/* WorkBuddy / CodeBuddy / AutoClaw 客户端 Tab 常驻挂载：
               切到 TraeWork/设置/关于再切回来也不卸载重建、不重新拉数据，积分直接显示已有缓存 */}
           <div className={cn("min-h-0 flex-1 flex-col", tab === "wb" ? "flex" : "hidden")}>
@@ -336,6 +330,28 @@ export default function Panel(p: PanelProps) {
         </>
       )}
     </Card>
+  );
+}
+
+function isTraeAuthError(error: string) {
+  return /iCubeAuthInfo|未找到|登录态|authenticate|authentication|1001|expired|过期/i.test(error);
+}
+
+function StatusErrorNotice({ error, compact = false }: { error: string; compact?: boolean }) {
+  const authError = isTraeAuthError(error);
+  return (
+    <div className={cn("px-1 py-2 text-xs", compact && "rounded-lg bg-destructive/5")}>
+      <p className="text-destructive">
+        {authError ? "TraeWork 登录已失效" : error}
+      </p>
+      <p className="mt-1 text-muted-foreground">
+        {authError
+          ? "请打开 TraeWork 客户端重新登录，再点 ⚡ 刷新"
+          : /daemon 未连接|后台服务|node/i.test(error)
+            ? "后台服务未正常运行：请重启 Work Pet 重试"
+            : "请确认后台服务正常运行，或重启桌面客户端重试"}
+      </p>
+    </div>
   );
 }
 
