@@ -151,6 +151,16 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
 
 ---
 
+## 贡献者
+
+感谢所有提交代码、文档、测试和问题反馈的贡献者。下面的头像列表会根据 GitHub 仓库贡献记录自动更新：PR 合并到 `main` 且提交作者能关联 GitHub 账号后，贡献者会自动显示，无需手动修改 README。
+
+<p align="center">
+  <a href="https://github.com/connoryang331/workpet/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=connoryang331/workpet" alt="WorkPet contributors" />
+  </a>
+</p>
+
 ## 🙏 致谢
 
 - [WorkDaddy](https://github.com/babygoton/WorkDaddy) —— WorkBuddy/CodeBuddy 端签到与积分解析逻辑的移植来源（AGPL-3.0）。
