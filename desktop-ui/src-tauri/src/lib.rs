@@ -259,8 +259,24 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<(), String> {
             .map_err(|e| format!("启动 AutoClaw 失败: {e}"))?;
         return Ok(());
     }
-    #[cfg(not(target_os = "windows"))]
-    Err("仅支持 Windows".to_string())
+    #[cfg(target_os = "macos")]
+    {
+        let cdp_ok = std::process::Command::new("sh")
+            .args(["-c", "curl -s --max-time 2 http://127.0.0.1:9226/json/version | grep -q webSocketDebuggerUrl"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if cdp_ok {
+            return Ok(());
+        }
+        std::process::Command::new("open")
+            .args(["-n", "/Applications/AutoClaw.app", "--args", "--remote-debugging-port=9226"])
+            .spawn()
+            .map_err(|e| format!("启动 AutoClaw 失败: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Err("仅支持 Windows / macOS".to_string())
 }
 
 /// 查询 daemon 自举是否完成（前端启动时轮询，避免错过一次性事件）。
