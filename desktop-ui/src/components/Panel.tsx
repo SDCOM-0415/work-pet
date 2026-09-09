@@ -319,7 +319,7 @@ export default function Panel(p: PanelProps) {
               label="AutoClaw"
               refreshTick={wbRefreshTick}
               active={tab === "ac"}
-              onLaunch={(force) => invoke("launch_autoclaw", { force: force ?? false }).then(() => undefined)}
+              onLaunch={(force) => invoke<string>("launch_autoclaw", { force: force ?? false })}
             />
           </div>
           {tab === "tw" && <AccountsTab p={p} checked={checked} />}

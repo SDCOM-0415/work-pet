@@ -1481,14 +1481,131 @@ async function acCdpClickSignin() {
   throw new Error('CDP 点击签到失败: ' + lastErr);
 }
 
+/**
+ * 通用：在 AutoClaw 的 CDP 渲染进程执行一段 JS，返回 returnByValue 结果。
+ * 遍历常见调试端口，命中 AutoClaw 页面即执行；全部失败则 throw。
+ */
+async function acCdpEvalOnce(jsExpr) {
+  const ports = [9226, 9225, 9224, 9223, 9222, 9227, 9228];
+  let lastErr = null;
+  for (const port of ports) {
+    let ws = null;
+    try {
+      const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) }).then(r => r.json()).catch(() => null);
+      if (!Array.isArray(list)) { lastErr = `port${port}不可达`; continue; }
+      const target = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl && /AutoClaw|autoclaw/i.test(t.title || ''));
+      if (!target) { lastErr = `port${port}无AutoClaw页面`; continue; }
+      ws = new WebSocket(target.webSocketDebuggerUrl);
+      await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('ws连接失败')); });
+      let id = 0; const pend = new Map();
+      ws.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m.id && pend.has(m.id)) { const { res, rej } = pend.get(m.id); pend.delete(m.id); m.error ? rej(new Error(m.error.message)) : res(m.result); } } catch (_) {} };
+      const send = (method, params = {}) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
+      const r = await send('Runtime.evaluate', { expression: jsExpr, returnByValue: true, awaitPromise: true, scriptTimeout: 8000 });
+      return r.result && r.result.value;
+    } catch (e) {
+      lastErr = e.message;
+    } finally {
+      if (ws) { try { ws.close(); } catch (_) {} }
+    }
+  }
+  throw new Error('CDP 不可用: ' + lastErr);
+}
+
+/**
+ * macOS 专属：经 CDP 从 AutoClaw 渲染进程的 electronAPI.auth 读取登录态与积分，
+ * 完全绕开 auth.json 的 AES 钥匙串解密（macOS 上钥匙串密码与实际 key 不匹配的坑）。
+ * 成功写入 store 的 ac 段（扁平记录），并返回 { raw, points }。
+ */
+async function acEnsureAuthViaCdp() {
+  if (!isMac) return null;
+  const obj = await acCdpEvalOnce(`(async () => {
+    const auth = window.electronAPI && window.electronAPI.auth;
+    if (!auth) return { error: 'no-auth-api' };
+    try {
+      const uc = await auth.getUserCache();
+      const tc = await auth.getTokenCache();
+      let pts = null, exp = null;
+      try { pts = await auth.getPoints(); } catch (e) {}
+      try { exp = await auth.getExpiringPoints(); } catch (e) {}
+      return {
+        userCache: uc || null,
+        tokenCache: tc || null,
+        points: (pts && pts.ok) ? pts : null,
+        expiring: (exp && exp.ok) ? exp : null,
+      };
+    } catch (e) { return { error: 'call-fail: ' + (e && e.message) }; }
+  })()`);
+  if (!obj || obj.error || !obj.tokenCache || !obj.tokenCache.token) {
+    throw new Error('CDP 读取 AutoClaw 登录态失败: ' + (obj && obj.error));
+  }
+  const tc = obj.tokenCache;
+  const uc = obj.userCache || {};
+  const rawToken = String(tc.token).replace(/^Bearer\s+/i, '');
+  // jwt payload（未验证签名，仅解析字段）；tc 本身无 jwt 字段，需自行解码
+  let jwtPayload = {};
+  try {
+    const p = rawToken.split('.');
+    if (p[1]) jwtPayload = JSON.parse(Buffer.from(p[1], 'base64url').toString('utf8'));
+  } catch (_) {}
+  const token = rawToken;
+  const uid = String(jwtPayload.user_id || uc.userId || tc.userId || '');
+  // 手机号优先取 tokenCache.user.phone；否则退而用 email（jwt jti 形如 xxx@gmail.com）
+  const email = jwtPayload.jti || '';
+  const store = loadStore();
+  const tab = store.ac;
+  const rec = {
+    uid,
+    nickname: uc.userName || uc.nickname || uid,
+    phone: (tc.user && tc.user.phone) || uc.phone || (email || ''),
+    tokenExpiresAt: (jwtPayload.exp ? jwtPayload.exp * 1000 : null) || tc.expiresAt || null,
+    lastRefreshTime: Date.now(),
+    accessToken: token,
+  };
+  // 加分字段不污染账号记录：积分类单独缓存
+  acCdpPointsCache = { points: (obj.points && obj.points.points) || null, expiring: (obj.expiring && obj.expiring.expiringPoints) || null, ts: Date.now() };
+  const i = tab.accounts.findIndex((x) => x && String(x.uid) === String(uid));
+  if (i >= 0) tab.accounts[i] = Object.assign({}, tab.accounts[i], rec);
+  else tab.accounts.push(rec);
+  tab.current = Object.assign({}, tab.accounts[i >= 0 ? i : tab.accounts.length - 1], rec);
+  saveStore(store);
+  log('[client:ac] CDP 已从 AutoClaw 读取登录态: ' + uid + ' (' + (rec.nickname || '') + ') 积分=' + (acCdpPointsCache.points));
+  return { raw: { token, uid, nickname: rec.nickname, phone: rec.phone }, points: acCdpPointsCache };
+}
+
+/** AutoClaw 经 CDP 读取的积分缓存（{ points, expiring, ts }） */
+let acCdpPointsCache = null;
+
+/**
+ * macOS 专属：经 CDP 调用 AutoClaw 的 electronAPI.auth 完成任务中心签到。
+ * 使用 getTaskList 判断 daily_signin 状态，未完成才调用 completeClientTask 执行签到；
+ * 幂等返回 { already }，完全绕开 HTTP 接口（macOS token 无法经 HTTP 认证的坑）。
+ */
+async function acCdpSignin() {
+  const r = await acCdpEvalOnce(`(async () => {
+    const auth = window.electronAPI && window.electronAPI.auth;
+    if (!auth) return { error: 'no-auth-api' };
+    try {
+      const tl = await auth.getTaskList();
+      const task = (tl && tl.data || []).find((x) => x.task_id === 'daily_signin');
+      if (task && task.status === 'completed') {
+        return { already: true, day: task.status_description || '' };
+      }
+      const done = await auth.completeClientTask({ task_id: 'daily_signin' });
+      return { already: !!(done && done.data && done.data.already_completed), resp: done };
+    } catch (e) { return { error: 'call-fail: ' + (e && e.message) }; }
+  })()`);
+  if (!r || r.error) throw new Error('CDP 任务签到失败: ' + (r && r.error));
+  return { cdp: true, already: !!r.already };
+}
+
 /** AutoClaw 签到 = 任务中心 daily_signin 任务完成（每日 200 分）；响应 data.already_completed = 已签 */
 async function acDailyCheckin(accessToken) {
-  // 方案1（macOS 优先）：AutoClaw 若以调试模式运行且界面可签到，用 CDP 点击让应用自己签
+  // 方案1（macOS 优先）：经 CDP 调用 AutoClaw 应用内任务 API 自行签到（绕开 HTTP token 认证坑）
   if (isMac) {
     try {
-      const r = await acCdpClickSignin();
+      const r = await acCdpSignin();
       return { ok: true, ...r, code: 0 };
-    } catch (_) { /* 未运行调试模式或点击失败 → 回退 API 方式 */ }
+    } catch (_) { /* 未运行调试模式或 CDP 失败 → 回退 API 方式 */ }
   }
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -1517,6 +1634,17 @@ async function acDailyCheckin(accessToken) {
 
 /** AutoClaw 积分查询：GET /agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw */
 async function acFetchCredits(accessToken) {
+  // macOS 优先：用 CDP 从 AutoClaw 应用内读取积分（electronAPI.auth.getPoints），
+  // 完全绕开 HTTP 接口对 auth.json 解密的依赖；缓存不过期则直接用。
+  if (isMac && acCdpPointsCache && acCdpPointsCache.points != null) {
+    const { points, expiring } = acCdpPointsCache;
+    const segments = [];
+    const exp = Number(expiring) || 0;
+    const tot = Number(points) || 0;
+    if (exp > 0) segments.push({ remaining: exp, total: exp, expiresAt: null, source: exp + ' 积分即将过期' });
+    if (tot - exp > 0) segments.push({ remaining: tot - exp, total: tot - exp, expiresAt: null, source: '长期积分' });
+    return { credits: tot, count: segments.length, totalDosage: 0, segments };
+  }
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -2343,8 +2471,16 @@ const server = http.createServer(async (req, res) => {
       }
       if (parts[4] === 'accounts') {
         clientClaimDailyForAll(pid).catch((e) => log('[client:' + pid + '] 自动签到失败: ' + e.message));
-        // AutoClaw 先确保解密 key 就绪，否则首次列表拿不到当前账号（同步路径快速失败不阻塞）
-        if (pid === 'ac') { try { await acRequestKey(); } catch (_) {} }
+        // AutoClaw 账号列表：macOS 优先经 CDP 从 AutoClaw 应用内读登录态/积分（绕开 auth.json 钥匙串解密坑）；
+        // CDP 不可用或读取失败再回退请求密钥做 auth.json 解密。
+        if (pid === 'ac') {
+          if (isMac) {
+            try { await acEnsureAuthViaCdp(); }
+            catch (e) { log('[client:ac] CDP 读登录态不可用，回退 auth.json 解密: ' + e.message); try { await acRequestKey(); } catch (_) {} }
+          } else {
+            try { await acRequestKey(); } catch (_) {}
+          }
+        }
         const list = clientListAccounts(pid);
         return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
       }

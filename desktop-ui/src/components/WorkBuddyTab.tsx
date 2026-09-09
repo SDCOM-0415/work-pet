@@ -34,7 +34,7 @@ export default function WorkBuddyTab({
   showPhone: boolean;
   kind?: ClientKind;
   label?: string;
-  onLaunch?: (force?: boolean) => Promise<void> | void;
+  onLaunch?: (force?: boolean) => Promise<string | void> | string | void;
   onLaunchCli?: () => Promise<void> | void;
   refreshTick?: number;
   /// 当前 Tab 是否被选中：切到时静默刷新积分（不清空页面、不显示加载态）
@@ -99,8 +99,14 @@ export default function WorkBuddyTab({
   const runLaunch = async (force = false) => {
     if (!onLaunch) return;
     try {
-      await onLaunch(force);
-      setLaunchMsg(null);
+      const res = await onLaunch(force);
+      if (res === "AC_REUSED") {
+        setLaunchMsg("已复用 AutoClaw 调试实例（CDP 已就绪）。");
+      } else if (res === "AC_LAUNCHED") {
+        setLaunchMsg(force ? "已重启 AutoClaw（CDP 调试模式）。" : "已以 CDP 调试模式启动 AutoClaw。");
+      } else {
+        setLaunchMsg(null);
+      }
       setRestartArmed(false);
       await load(true);
     } catch (e) {
