@@ -124,9 +124,11 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
 | **WorkBuddy** | 纯读本地数据文件 | 纯 HTTP API | 纯 HTTP API | ✅ **全程无感，无需打开** |
 | **CodeBuddy** | 纯读本地数据文件 | 纯 HTTP API | 纯 HTTP API | ✅ **全程无感，无需打开** |
 | **TraeWork** | 纯读本地数据文件（内置 AES 解密） | 纯 HTTP API | 借宿主官方 IPC 秒级签到（抗 9074 拦截） | ⚠️ **仅当天未签到时静默唤醒 1~2 秒，签完即自动退出** |
-| **AutoClaw** | 纯读本地 `auth.json`（本地解密） | 纯 HTTP API | 纯 HTTP API | ✅ **全程无感，无需打开客户端** |
+| **AutoClaw（macOS）** | CDP 运行时读登录态（无需解密） | 纯 HTTP API | CDP 自动点击「签到」按钮 | ⚠️ **需先启动 AutoClaw（daemon 会自动拉起并注入调试端口）** |
+| **AutoClaw（Windows）** | 纯读本地 `auth.json`（本地解密） | 纯 HTTP API | 纯 HTTP API | ✅ **全程无感，无需打开客户端** |
 
 - **获取登录态完全无需打开客户端**：Work Pet 对各客户端的本地登录数据进行读取与解密，直接从磁盘解出昵称、头像与 Token，无需启动客户端。
+- **macOS AutoClaw 无法离线读取登录态**：macOS 上 AutoClaw 的安全存储密钥存放在系统钥匙串，密钥派生方式与 Windows DPAPI 不同，且当前环境钥匙串密码与 `auth.json` 不匹配，无法直接解密。因此 macOS 上采用与 TraeWork 相同的思路——**启动 AutoClaw 并以调试模式运行**，通过 CDP 读取登录态并自动签到。如果 AutoClaw 账号显示「暂无登录态」，请确保 AutoClaw 已在运行（Work Pet daemon 会在启动时自动拉起）。
 - **启动时 TraeWork 闪开闪关的原因**：Trae 服务端对第三方网络库的直接 HTTP 签到有强风控拦截（返回 `9074 当前参与用户太多`），但官方内核的 IPC 请求可以稳定成功。因此，**仅在账号当天尚未签到时**，WorkPet 会带 `--remote-debugging-port` 静默唤醒 TraeWork 触发签到，**签完即刻自动退出**；若今天已签到过，则完全不会启动它。
 
 ---
