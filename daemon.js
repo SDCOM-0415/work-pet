@@ -576,7 +576,7 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'tw'], tabShowText: false, hidePet: true };
+const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: isMac, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'tw'], tabShowText: false, hidePet: true };
 // 旧配置兼容：TraeWork Tab 的 key 原为 'accounts'，v1.0.2 起统一为 'tw'
 function normalizeTabOrder(v) {
   if (!Array.isArray(v)) return null;
@@ -1392,8 +1392,104 @@ function clientTokenFor(profileId, uid) {
   return rec.accessToken || null; // ac 段账号记录直接存 accessToken
 }
 
+/** AutoClaw 调试端口（CDP）是否已在监听（复用中，无需重复拉起） */
+async function isAcCdpUp(port) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(800) });
+    if (!r.ok) return false;
+    const o = await r.json().catch(() => ({}));
+    return !!(o && o.webSocketDebuggerUrl);
+  } catch (_) { return false; }
+}
+
+/** 启动 AutoClaw（带 --remote-debugging-port，供 CDP 签到所用）；不做 download 等待，只需拉起 */
+function acLaunchBinary() {
+  const port = CLIENT_PROFILES.ac.cdpPort;
+  // 复用已运行的调试实例
+  return isAcCdpUp(port).then((up) => {
+    if (up) { log('[client:ac] CDP 已在监听，复用现有 AutoClaw'); return 'reuse'; }
+    const exe = isMac
+      ? '/Applications/AutoClaw.app/Contents/MacOS/AutoClaw'
+      : ['D:/Program Files/AutoClaw/AutoClaw.exe',
+         path.join(process.env.ProgramFiles || 'C:/Program Files', 'AutoClaw', 'AutoClaw.exe'),
+         path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw', 'AutoClaw.exe')]
+        .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
+    if (!exe) throw new Error('未找到 AutoClaw 可执行文件');
+    const args = ['--remote-debugging-port=' + port];
+    let child;
+    if (isMac) {
+      // macOS 走 open -n，避免直接 spawn .app 内二进制丢环境
+      child = spawn('open', ['-n', exe, '--args', '--remote-debugging-port=' + port], { stdio: 'ignore', detached: true });
+    } else {
+      child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    }
+    child.unref();
+    log(`[client:ac] 已拉起 AutoClaw (--remote-debugging-port=${port})`);
+    return 'launched';
+  });
+}
+
+/**
+ * AutoClaw CDP 点击签到（方案1，macOS 优先）：当 AutoClaw 正以 --remote-debugging-port 运行时，
+ * 经 CDP 找到「每日签到」按钮点击，让 AutoClaw 用自己内存中的登录态完成签到，
+ * 从而完全绕开 auth.json 的 AES key 解密（macOS 上钥匙串密码与实际 key 不匹配的坑）。
+ *
+ * 仅在界面可见「签到」且未显示「已完成/已签到」时触发；成功返回 { cdp: true, already }。
+ */
+async function acCdpClickSignin() {
+  const ports = [9226, 9225, 9224, 9223, 9222, 9227, 9228];
+  let lastErr = null;
+  for (const port of ports) {
+    let ws = null;
+    try {
+      const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1200) }).then(r => r.json()).catch(() => null);
+      if (!Array.isArray(list)) { lastErr = `port${port}不可达`; continue; }
+      const target = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl && /AutoClaw|autoclaw/i.test(t.title || ''));
+      if (!target) { lastErr = `port${port}无AutoClaw页面`; continue; }
+      ws = new WebSocket(target.webSocketDebuggerUrl);
+      await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('ws连接失败')); });
+      let id = 0; const pend = new Map();
+      ws.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m.id && pend.has(m.id)) { const { res, rej } = pend.get(m.id); pend.delete(m.id); m.error ? rej(new Error(m.error.message)) : res(m.result); } } catch (_) {} };
+      const send = (method, params = {}) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
+      const evalJs = (expression) => send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }).then(r => r.result && r.result.value);
+      // 检查签到区状态
+      const state = await evalJs(`(() => { const t = (document.body && document.body.innerText) || '';
+        const doneBtn = [...document.querySelectorAll('button')].some(b => /已.?完成|已签.{1,3}天/i.test((b.textContent||'').trim()));
+        return { textHasDone: /已.?完成|已签.{1,3}天/i.test(t) }; })()`);
+      if (state && state.textHasDone) {
+        log('[client:ac] CDP 检查：今日已签到（界面显示已完成），跳过');
+        return { cdp: true, already: true };
+      }
+      // 点击「签到」按钮（避免点到「去邀请」「已完成」等）
+      const clicked = await evalJs(`(() => { const btns = [...document.querySelectorAll('button')];
+        const b = btns.find(x => /^签到$|^签\s*到$/.test((x.textContent||'').trim()));
+        if (b) { b.click(); return 'clicked'; }
+        return 'notfound'; })()`);
+      if (clicked !== 'clicked') { lastErr = '未找到「签到」按钮'; continue; }
+      log('[client:ac] CDP 已点击「签到」按钮，等待 AutoClaw 自行完成...');
+      await new Promise(r => setTimeout(r, 6000));
+      // 回读结果（界面是否变为已完成/已签）
+      const after = await evalJs(`(() => { const t = (document.body && document.body.innerText) || '';
+        return { done: /已.?完成|已签.{1,3}天/i.test(t), around: (t.match(/每日签到得[\\s\\S]{0,120}/) || [])[0] || '' }; })()`);
+      return { cdp: true, already: false, message: '已触发 AutoClaw 自己签到', body: { after } };
+    } catch (e) {
+      lastErr = e.message;
+    } finally {
+      if (ws) { try { ws.close(); } catch (_) {} }
+    }
+  }
+  throw new Error('CDP 点击签到失败: ' + lastErr);
+}
+
 /** AutoClaw 签到 = 任务中心 daily_signin 任务完成（每日 200 分）；响应 data.already_completed = 已签 */
 async function acDailyCheckin(accessToken) {
+  // 方案1（macOS 优先）：AutoClaw 若以调试模式运行且界面可签到，用 CDP 点击让应用自己签
+  if (isMac) {
+    try {
+      const r = await acCdpClickSignin();
+      return { ok: true, ...r, code: 0 };
+    } catch (_) { /* 未运行调试模式或点击失败 → 回退 API 方式 */ }
+  }
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await sleep(2000);
@@ -2736,19 +2832,12 @@ async function main() {
     })();
   }, 5 * 60 * 1000).unref();
 
-  // 设置项：打开 Pet 时同时启动 AutoClaw（默认关闭）
-  if (settings.acLaunchOnStart) {
-    log('[proc] 设置项开启：启动时拉起 AutoClaw');
-    try {
-      const exe = ['D:/Program Files/AutoClaw/AutoClaw.exe',
-        path.join(process.env.ProgramFiles || 'C:/Program Files', 'AutoClaw', 'AutoClaw.exe'),
-        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw', 'AutoClaw.exe')]
-        .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
-      if (exe) spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      else log('[proc] 未找到 AutoClaw.exe，跳过拉起');
-    } catch (e) {
-      log('[proc] 拉起 AutoClaw 异常: ' + e.message);
-    }
+  // macOS 专属：每次启动都拉起 AutoClaw（带调试端口供 CDP 签到）；Windows 保持由设置项 acLaunchOnStart 控制
+  if (isMac || settings.acLaunchOnStart) {
+    log('[proc] 启动时拉起 AutoClaw（macOS 强制，其余平台按设置）');
+    acLaunchBinary()
+      .then((how) => log('[proc] AutoClaw 拉起结果: ' + how))
+      .catch((e) => log('[proc] 拉起 AutoClaw 异常: ' + e.message));
   }
 
   // 桌面版：宠物/面板由 Rust 桌面客户端承载，不再向 TraeWork 注入 JS。
