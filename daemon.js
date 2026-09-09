@@ -907,7 +907,10 @@ const { extractCreditSegments, sortCreditSegments, mergeCreditSegments } = requi
 // 积分 = GET /agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw（total_points / expiring_points）。
 // 签名头 = X-Auth-Appid/X-Auth-TimeStamp/X-Auth-Sign（md5(appid&ts&appkey)），token 走 Authorization Bearer。
 // Cookie 时限 = JWT exp（access_token 是 JWT，24h）；refresh 走 /userapi/v1/refresh（refresh_token 轮换，回写 auth.json）。
-const AC_DATA_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'autoclaw');
+// macOS：Electron safeStorage 密钥在登录钥匙串（service "autoclaw Safe Storage"，密码经 PBKDF2 派生 AES key）
+const AC_DATA_DIR = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'autoclaw')
+  : path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'autoclaw');
 const AC_AUTH_FILE = path.join(AC_DATA_DIR, 'auth.json');
 const AC_LOCAL_STATE = path.join(AC_DATA_DIR, 'Local State');
 const AC_API_HOST = 'https://autoglm-acceleration-api.zhipuai.cn';
@@ -990,20 +993,61 @@ function acDpapiViaPowershell(data) {
   });
 }
 
+// ---------------- macOS：从登录钥匙串读取 safeStorage 密码并派生 AES key ----------------
+// Electron safeStorage 在 macOS 上把随机密码存进登录钥匙串（service "<AppName> Safe Storage"，
+// account "<AppName>"），AES key = PBKDF2-HMAC-SHA1(password, salt="saltysalt", 1003 次, 16B)。
+// 与 Windows 的 Local State + DPAPI 完全不同的路径；首次读取会弹钥匙串授权框，用户点允许后记住。
+const AC_KEYCHAIN_SERVICE = 'autoclaw Safe Storage';
+const AC_KEYCHAIN_ACCOUNT = 'autoclaw';
+const AC_MAC_PBKDF2_SALT = Buffer.from('saltysalt', 'utf8');
+const AC_MAC_PBKDF2_ITERS = 1003;
+
+function acMacDeriveKey(keychainPassword) {
+  return crypto.pbkdf2Sync(keychainPassword, AC_MAC_PBKDF2_SALT, AC_MAC_PBKDF2_ITERS, 16, 'sha1');
+}
+
+/** 异步读钥匙串密码（spawn security；15s 超时，不阻塞事件循环，与 Windows powershell 路径同理） */
+function acMacReadPasswordAsync() {
+  return new Promise((resolve, reject) => {
+    const child = spawn('security', ['find-generic-password', '-s', AC_KEYCHAIN_SERVICE, '-a', AC_KEYCHAIN_ACCOUNT, '-w'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill(); } catch (_) {}
+      reject(new Error('AutoClaw 钥匙串读取超时（15s）'));
+    }, 15000);
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', () => {});
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error('AutoClaw 钥匙串启动失败: ' + e.message)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (code !== 0) { reject(new Error('AutoClaw 钥匙串读取失败(exit ' + code + ')')); return; }
+      const pw = out.trim();
+      if (!pw) { reject(new Error('AutoClaw 钥匙串密码为空')); return; }
+      resolve(acMacDeriveKey(pw));
+    });
+  });
+}
+
 /** 获取 AutoClaw AES key：只解一次并缓存；并发调用共享同一个 Promise */
 function acRequestKey() {
   if (acKeyCache) return Promise.resolve(acKeyCache);
   if (!acKeyPromise) {
-    acKeyPromise = (async () => {
-      const ls = readJsonOrNull(AC_LOCAL_STATE);
-      const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
-      if (!enc) throw new Error('AutoClaw Local State 无 os_crypt.encrypted_key');
-      const raw = Buffer.from(enc, 'base64');
-      if (raw.slice(0, 5).toString() !== 'DPAPI') return raw;
-      const viaNative = acDpapiNative(raw.slice(5));
-      if (viaNative) return viaNative;
-      return await acDpapiViaPowershell(raw.slice(5));
-    })().then((k) => { acKeyCache = k; acKeyPromise = null; return k; })
+    acKeyPromise = (isMac
+      ? acMacReadPasswordAsync()
+      : (async () => {
+          const ls = readJsonOrNull(AC_LOCAL_STATE);
+          const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
+          if (!enc) throw new Error('AutoClaw Local State 无 os_crypt.encrypted_key');
+          const raw = Buffer.from(enc, 'base64');
+          if (raw.slice(0, 5).toString() !== 'DPAPI') return raw;
+          const viaNative = acDpapiNative(raw.slice(5));
+          if (viaNative) return viaNative;
+          return await acDpapiViaPowershell(raw.slice(5));
+        })()
+    ).then((k) => { acKeyCache = k; acKeyPromise = null; return k; })
       .catch((e) => { acKeyPromise = null; throw e; });
   }
   return acKeyPromise;
@@ -1020,18 +1064,26 @@ function acKeySync() {
   throw AC_KEY_PENDING;
 }
 
-/** 纯 AES-256-GCM 解密单个 token；key 可显式传入（异步路径）或走缓存（同步路径） */
+/** 纯 AES 解密单个 token；key 可显式传入（异步路径）或走缓存（同步路径）。
+ *  Windows: v10 + nonce(12) + ciphertext + tag(16)，AES-256-GCM，key 来自 DPAPI。
+ *  macOS:   v10 + ciphertext，AES-128-CBC（IV 固定 16 空格，PKCS7），key 来自钥匙串 PBKDF2 派生。 */
 function acDecryptToken(encStr, key) {
   if (!encStr) return '';
   if (!encStr.startsWith('enc:')) return encStr.replace(/^Bearer\s+/, '');
   const raw = Buffer.from(encStr.slice(4), 'base64');
   if (raw.slice(0, 3).toString() !== 'v10') return encStr.replace(/^Bearer\s+/, '');
   const k = key || acKeySync(); // 同步路径未就绪时抛 AC_KEY_PENDING
-  const nonce = raw.slice(3, 15), ct = raw.slice(15);
-  const tag = ct.slice(ct.length - 16), body = ct.slice(0, ct.length - 16);
-  const dec = crypto.createDecipheriv('aes-256-gcm', k, nonce);
-  dec.setAuthTag(tag);
-  const pt = Buffer.concat([dec.update(body), dec.final()]);
+  let pt;
+  if (isMac) {
+    const dec = crypto.createDecipheriv('aes-128-cbc', k, Buffer.alloc(16, 0x20));
+    pt = Buffer.concat([dec.update(raw.slice(3)), dec.final()]);
+  } else {
+    const nonce = raw.slice(3, 15), ct = raw.slice(15);
+    const tag = ct.slice(ct.length - 16), body = ct.slice(0, ct.length - 16);
+    const dec = crypto.createDecipheriv('aes-256-gcm', k, nonce);
+    dec.setAuthTag(tag);
+    pt = Buffer.concat([dec.update(body), dec.final()]);
+  }
   return pt.toString('utf8').replace(/^Bearer\s+/, '');
 }
 
@@ -1135,9 +1187,16 @@ async function acPersistRefreshedToken(newAccess, newRefresh) {
   try {
     const raw = readJsonOrNull(AC_AUTH_FILE);
     if (!raw) return false;
-    // 尝试用同 key 重新加密（Electron safeStorage v10 = AES-256-GCM，key 已解出）
+    // 尝试用同 key 重新加密（保持各平台 Electron safeStorage 原生格式，AutoClaw 自身可读回）
     const key = await acRequestKey();
     const enc = (plain) => {
+      if (isMac) {
+        // macOS：enc: + base64(v10 + AES-128-CBC 密文)，IV 固定 16 空格
+        const cipher = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+        const ct = Buffer.concat([cipher.update(Buffer.from(plain, 'utf8')), cipher.final()]);
+        return 'enc:' + Buffer.concat([Buffer.from('v10', 'utf8'), ct]).toString('base64');
+      }
+      // Windows：v10 + nonce(12) + ciphertext + tag(16)，AES-256-GCM
       const nonce = crypto.randomBytes(12);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
       const ct = Buffer.concat([cipher.update(Buffer.from(plain, 'utf8')), cipher.final()]);
