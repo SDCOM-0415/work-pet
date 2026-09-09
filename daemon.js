@@ -1416,13 +1416,11 @@ function acLaunchBinary() {
         .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
     if (!exe) throw new Error('未找到 AutoClaw 可执行文件');
     const args = ['--remote-debugging-port=' + port];
-    let child;
-    if (isMac) {
-      // macOS 走 open -n，避免直接 spawn .app 内二进制丢环境
-      child = spawn('open', ['-n', exe, '--args', '--remote-debugging-port=' + port], { stdio: 'ignore', detached: true });
-    } else {
-      child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
-    }
+    // macOS：直接 spawn .app 内真实可执行文件（与 Trae 同款），参数可稳定传给 Electron 主进程；
+    // 走 'open -n' 会激活窗口闪烁。Windows 已用隐藏窗口拉起。
+    const child = isMac
+      ? spawn(exe, args, { stdio: 'ignore', detached: true })
+      : spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
     child.unref();
     log(`[client:ac] 已拉起 AutoClaw (--remote-debugging-port=${port})`);
     return 'launched';
@@ -2849,8 +2847,11 @@ function killTraeWork() {
 /** 退出 AutoClaw（macOS 与 Windows），用于「签到后自动关闭」的临启即关场景 */
 function killAutoClaw() {
   if (isMac) {
+    // 先 SIGKILL 强杀（杀主进程与所有子进程），避免 osascript 走优雅退出要等用户确认；
+    // 杀完再用 osascript 兜底处理 dock 图标残留。
+    try { execFileSync('pkill', ['-9', '-x', 'AutoClaw'], { stdio: 'ignore' }); } catch (_) {}
+    try { execFileSync('pkill', ['-9', '-f', 'AutoClaw Helper'], { stdio: 'ignore' }); } catch (_) {}
     try { execFileSync('osascript', ['-e', 'tell application "AutoClaw" to quit'], { stdio: 'ignore' }); } catch (_) {}
-    try { execFileSync('pkill', ['-f', 'AutoClaw'], { stdio: 'ignore' }); } catch (_) {}
   } else {
     try { execFileSync('taskkill', ['/IM', 'AutoClaw.exe', '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
   }
