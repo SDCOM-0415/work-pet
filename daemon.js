@@ -576,7 +576,7 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: isMac, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'tw'], tabShowText: false, hidePet: true };
+const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'tw'], tabShowText: false, hidePet: true };
 // 旧配置兼容：TraeWork Tab 的 key 原为 'accounts'，v1.0.2 起统一为 'tw'
 function normalizeTabOrder(v) {
   if (!Array.isArray(v)) return null;
@@ -1600,10 +1600,29 @@ async function acCdpSignin() {
 
 /** AutoClaw 签到 = 任务中心 daily_signin 任务完成（每日 200 分）；响应 data.already_completed = 已签 */
 async function acDailyCheckin(accessToken) {
-  // 方案1（macOS 优先）：经 CDP 调用 AutoClaw 应用内任务 API 自行签到（绕开 HTTP token 认证坑）
+  // 方案1（macOS 优先，临启即关，对齐 TraeWork）：签到时自动启动 AutoClaw（CDP 模式），
+  // 经应用内任务 API 自行签到（绕开 HTTP token 认证坑），签到完成后自动关闭 AutoClaw。
   if (isMac) {
+    // 记录是否由本进程临时拉起 AutoClaw：仅「临时拉起」场景签到后自动关闭，
+    // 若复用用户已运行的实例则不关闭，避免打扰用户正在使用的客户端。
+    let autoLaunched = false;
     try {
+      const how = await acLaunchBinary(); // 'reuse' 复用现有实例，'launched' 本次临时拉起
+      autoLaunched = how === 'launched';
+      let up = false;
+      const dl = Date.now() + 15000;
+      while (Date.now() < dl) {
+        if (await isAcCdpUp(CLIENT_PROFILES.ac.cdpPort)) { up = true; break; }
+        await sleep(400);
+      }
+      if (!up) throw new Error('AutoClaw CDP 未就绪');
       const r = await acCdpSignin();
+      // 签到完成 → 自动关闭 AutoClaw（与 Trae 一致：签到时临时拉起，签完即退）
+      if (autoLaunched) {
+        try { killAutoClaw(); log('[client:ac] CDP 签到完成，已自动关闭临时拉起的 AutoClaw'); } catch (_) {}
+      } else {
+        log('[client:ac] CDP 签到完成（复用已运行实例，保持 AutoClaw 不关闭）');
+      }
       return { ok: true, ...r, code: 0 };
     } catch (_) { /* 未运行调试模式或 CDP 失败 → 回退 API 方式 */ }
   }
@@ -2827,6 +2846,16 @@ function killTraeWork() {
   }
 }
 
+/** 退出 AutoClaw（macOS 与 Windows），用于「签到后自动关闭」的临启即关场景 */
+function killAutoClaw() {
+  if (isMac) {
+    try { execFileSync('osascript', ['-e', 'tell application "AutoClaw" to quit'], { stdio: 'ignore' }); } catch (_) {}
+    try { execFileSync('pkill', ['-f', 'AutoClaw'], { stdio: 'ignore' }); } catch (_) {}
+  } else {
+    try { execFileSync('taskkill', ['/IM', 'AutoClaw.exe', '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+  }
+}
+
 async function ensureTraeWorkWithCdp() {
   if (await findCdpEndpoint()) return { started: false, reused: true };
   if (!CFG.exe) return { started: false, error: '未找到 TraeWork 安装目录' };
@@ -2968,9 +2997,11 @@ async function main() {
     })();
   }, 5 * 60 * 1000).unref();
 
-  // macOS 专属：每次启动都拉起 AutoClaw（带调试端口供 CDP 签到）；Windows 保持由设置项 acLaunchOnStart 控制
-  if (isMac || settings.acLaunchOnStart) {
-    log('[proc] 启动时拉起 AutoClaw（macOS 强制，其余平台按设置）');
+  // AutoClaw：仅按设置 acLaunchOnStart 拉起（默认关闭，与 Trae 一致）；签到走「临时拉起→签完即关」，
+  // 不再启动时常驻，避免 AutoClaw 一直占用资源。macOS 读登录态依赖 AutoClaw 运行时（CDP），
+  // 若未运行则账号显示「暂无登录态」。
+  if (settings.acLaunchOnStart) {
+    log('[proc] 设置项开启：启动时拉起 AutoClaw（供账号显示）');
     acLaunchBinary()
       .then((how) => log('[proc] AutoClaw 拉起结果: ' + how))
       .catch((e) => log('[proc] 拉起 AutoClaw 异常: ' + e.message));
