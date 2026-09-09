@@ -736,7 +736,7 @@ pub fn run() {
         let _ = std::fs::write(&lock_path, std::process::id().to_string());
     }
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(BootstrapState::default())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -789,6 +789,18 @@ pub fn run() {
             quit_app,
             open_external
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running WorkPet");
+        .build(tauri::generate_context!())
+        .expect("failed to build WorkPet");
+
+    // macOS：点击 dock 图标（reopen）时恢复隐藏的宠物窗口
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Reopen { .. } = event {
+            if let Some(win) = app_handle.get_webview_window("pet") {
+                let _ = win.show();
+                let _ = win.set_focus();
+                // 通知前端：保持面板展开（否则 hidePet 的 effect 会再次隐藏窗口）
+                let _ = app_handle.emit("tray-event", "open-panel");
+            }
+        }
+    });
 }
