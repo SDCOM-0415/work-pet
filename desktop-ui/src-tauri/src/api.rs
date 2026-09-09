@@ -26,6 +26,16 @@ fn pet_token() -> Option<String> {
     if let Ok(appdata) = std::env::var("APPDATA") {
         candidates.push(Path::new(&appdata).join("WorkPet").join(".api-token"));
     }
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(
+            Path::new(&home)
+                .join("Library")
+                .join("Application Support")
+                .join("WorkPet")
+                .join(".api-token"),
+        );
+    }
 
     for path in candidates {
         if let Ok(t) = std::fs::read_to_string(&path) {
@@ -159,6 +169,8 @@ fn find_daemon_js() -> Option<std::path::PathBuf> {
         exe_dir.join("daemon.js"),
         exe_dir.join("_up_").join("_up_").join("daemon.js"),
         exe_dir.join("resources").join("daemon.js"),
+        // macOS .app bundle: Contents/MacOS/work-pet -> Contents/Resources/daemon.js
+        exe_dir.join("..").join("Resources").join("daemon.js"),
     ];
     for c in &candidates {
         if c.is_file() {
@@ -177,17 +189,30 @@ fn find_daemon_js() -> Option<std::path::PathBuf> {
     None
 }
 
-/// 在常见安装位置定位 node.exe。
+/// 在常见安装位置定位 node 可执行文件（Windows 用 node.exe，macOS 用 node）。
 fn find_node() -> String {
     let mut v: Vec<std::path::PathBuf> = Vec::new();
     // 优先使用随安装包捆绑的 node 运行时（用户无需自行安装 Node.js）
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            v.push(dir.join("node"));
+            v.push(dir.join("binaries").join("node"));
             v.push(dir.join("node.exe"));
             v.push(dir.join("binaries").join("node.exe"));
-            // 开发环境：从 exe 目录向上找 binaries/node.exe
+
+            // macOS .app：Tauri resources 位于 Contents/Resources。
+            if cfg!(target_os = "macos") {
+                if let Some(contents_dir) = dir.parent() {
+                    let resources = contents_dir.join("Resources");
+                    v.push(resources.join("binaries").join("node"));
+                    v.push(resources.join("node"));
+                }
+            }
+
+            // 开发环境：从 exe 目录向上找 binaries/node(.exe)
             let mut d = dir.to_path_buf();
             for _ in 0..5 {
+                v.push(d.join("binaries").join("node"));
                 v.push(d.join("binaries").join("node.exe"));
                 d = match d.parent() {
                     Some(p) => p.to_path_buf(),
@@ -205,7 +230,12 @@ fn find_node() -> String {
     if let Ok(la) = std::env::var("LOCALAPPDATA") {
         v.push(Path::new(&la).join("Programs").join("nodejs").join("node.exe"));
     }
-    for p in v {
+    if cfg!(target_os = "macos") {
+        v.push(Path::new("/opt/homebrew/bin/node").to_path_buf());
+        v.push(Path::new("/usr/local/bin/node").to_path_buf());
+        v.push(Path::new("/usr/bin/node").to_path_buf());
+    }
+    for p in &v {
         if p.is_file() {
             if let Some(s) = p.to_str() {
                 return s.to_string();
@@ -225,7 +255,17 @@ fn spawn_daemon() -> Result<(), String> {
 
     let mut cmd = std::process::Command::new(node);
     cmd.arg(&daemon);
-    // 便携数据目录：账号备份/设置/积分缓存存到 exe 同目录（不写 C 盘 AppData）
+    // Windows 保持原有便携数据目录；macOS 使用标准 Application Support，避免写 .app Bundle。
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        let data_dir = Path::new(&home)
+            .join("Library")
+            .join("Application Support")
+            .join("WorkPet");
+        let _ = std::fs::create_dir_all(&data_dir);
+        cmd.env("WORKPET_DATA_DIR", &data_dir);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(exe_dir) = std::env::current_exe()
         .ok()
         .as_ref()
@@ -306,7 +346,7 @@ pub fn ensure_daemon() -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(800));
     }
-    Err("后台服务启动超时，请确认已安装 Node.js".to_string())
+    Err("后台服务启动超时：内置 Node 或 daemon.js 启动失败".to_string())
 }
 
 /// 发送请求终止本地常驻 daemon（避免安装更新时 node.exe 被锁定）

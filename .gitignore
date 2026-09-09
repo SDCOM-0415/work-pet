@@ -11,11 +11,13 @@ node_modules/
 dist/
 desktop-ui/src-tauri/target/
 desktop-ui/src-tauri/gen/
+desktop-ui/src-tauri/binaries/
 
 # ===== 系统/编辑器 =====
 .DS_Store
 Thumbs.db
 desktop-ui/.vite/
+.kagent/
 
 # ===== 调试/临时文件 =====
 *.bak

@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Window};
 
+#[cfg(target_os = "macos")]
+const LAUNCHAGENT_PLIST: &str = "com.workpet.pet.plist";
+
 /// 面板开合对应的逻辑窗口尺寸（CSS 像素；与前端布局一致）
 const WIN_W: f64 = 480.0;
 const WIN_H: f64 = 900.0; // 展开高度：新字号基准(1.15x)下完整显示 WorkBuddy 3 个账号
@@ -53,6 +56,23 @@ fn resolve_codebuddy_exe() -> Option<PathBuf> {
     }
     candidates.push(PathBuf::from(r"D:\Program Files\CodeBuddy CN\CodeBuddy CN.exe"));
     candidates.into_iter().find(|c| c.is_file())
+}
+
+/// macOS 上查找 CodeBuddy / WorkBuddy 应用（如有安装）。
+#[cfg(target_os = "macos")]
+fn resolve_client_exe(name: &str) -> Option<PathBuf> {
+    let candidate = PathBuf::from(format!("/Applications/{}.app", name));
+    if candidate.is_file() {
+        return Some(candidate);
+    }
+    // 也检查 ~/Applications
+    if let Ok(home) = std::env::var("HOME") {
+        let alt = PathBuf::from(format!("{}/Applications/{}.app", home, name));
+        if alt.is_file() {
+            return Some(alt);
+        }
+    }
+    None
 }
 
 /// 以 CDP 模式拉起 CodeBuddy（端口 9224）。
@@ -147,8 +167,25 @@ fn launch_codebuddy_cli() -> Result<(), String> {
             .map_err(|e| format!("启动 CLI 失败: {e}"))?;
         return Ok(());
     }
-    #[cfg(not(target_os = "windows"))]
-    Err("仅支持 Windows".to_string())
+    #[cfg(target_os = "macos")]
+    {
+        let probe = std::process::Command::new("sh")
+            .args(["-c", "command -v codebuddy"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        if probe.trim().is_empty() {
+            return Err("未找到 CodeBuddy CLI，请先安装：npm install -g @tencent-ai/codebuddy-code".to_string());
+        }
+        // macOS：在 Terminal 中打开 CLI
+        std::process::Command::new("open")
+            .args(["-a", "Terminal", "--args", "bash", "-c", "codebuddy; exec bash"])
+            .spawn()
+            .map_err(|e| format!("启动 CLI 失败: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Err("仅支持 Windows / macOS".to_string())
 }
 
 /// 以 CDP 模式拉起 AutoClaw 客户端（端口 9226）。
@@ -326,7 +363,7 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
-// ---------------- 随系统启动（HKCU Run 注册表） ----------------
+// ---------------- 随系统启动（HKCU Run 注册表 / LaunchAgents plist） ----------------
 
 #[cfg(target_os = "windows")]
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -345,8 +382,88 @@ fn is_autostart_enabled() -> Result<bool, String> {
             .map_err(|e| e.to_string())?;
         Ok(String::from_utf8_lossy(&out.stdout).contains("WorkPet"))
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let la_dir = match std::env::var("HOME") {
+            Ok(h) => PathBuf::from(h).join("Library/LaunchAgents"),
+            Err(_) => return Ok(false),
+        };
+        let plist = la_dir.join(LAUNCHAGENT_PLIST);
+        Ok(plist.exists())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     Ok(false)
+}
+
+/// 开/关随系统启动（写入当前用户注册表 / LaunchAgents plist，不需要管理员权限）。
+#[tauri::command]
+fn set_autostart(enable: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        if enable {
+            std::process::Command::new("reg")
+                .args([
+                    "add",
+                    RUN_KEY,
+                    "/v",
+                    "WorkPet",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &format!("\"{}\"", exe.display()),
+                    "/f",
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map_err(|e| e.to_string())?;
+        } else {
+            let _ = std::process::Command::new("reg")
+                .args(["delete", RUN_KEY, "/v", "WorkPet", "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let la_dir = match std::env::var("HOME") {
+            Ok(h) => PathBuf::from(h).join("Library/LaunchAgents"),
+            Err(_) => return Err("无法获取 HOME 目录".to_string()),
+        };
+        std::fs::create_dir_all(&la_dir).map_err(|e| e.to_string())?;
+        let plist = la_dir.join(LAUNCHAGENT_PLIST);
+        if enable {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let plist_content = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                 <plist version=\"1.0\">\n\
+                 <dict>\n\
+                 \t<key>Label</key>\n\
+                 \t<string>{}</string>\n\
+                 \t<key>ProgramArguments</key>\n\
+                 \t<array>\n\
+                 \t\t<string>{}</string>\n\
+                 \t</array>\n\
+                 \t<key>RunAtLoad</key>\n\
+                 \t<true/>\n\
+                 \t<key>KeepAlive</key>\n\
+                 \t<true/>\n\
+                 \t<key>StandardErrorPath</key>\n\
+                 \t<string>/tmp/workpet.log</string>\n\
+                 \t<key>StandardOutPath</key>\n\
+                 \t<string>/tmp/workpet.log</string>\n\
+                 </dict>\n\
+                 </plist>",
+                LAUNCHAGENT_PLIST,
+                exe.display()
+            );
+            std::fs::write(&plist, plist_content).map_err(|e| e.to_string())?;
+        } else if plist.exists() {
+            std::fs::remove_file(&plist).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 /// 以 CDP 模式拉起 WorkBuddy 客户端（已运行则跳过）。
@@ -355,8 +472,6 @@ async fn launch_workbuddy(force: Option<bool>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let force = force.unwrap_or(false);
-        // force=true（切换/启动按钮语义）：无论是否在运行都先关闭，再带 CDP 重启，
-        // 确保客户端加载的就是当前登录账号（运行中的实例内存里还是旧账号）
         if force {
             let running = std::process::Command::new("tasklist")
                 .args(["/FI", "IMAGENAME eq WorkBuddy.exe", "/FO", "CSV"])
@@ -386,7 +501,6 @@ async fn launch_workbuddy(force: Option<bool>) -> Result<(), String> {
             }
             return spawn_workbuddy_with_cdp();
         }
-        // 已开 CDP → 直接返回
         let cdp_ok = std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
@@ -400,8 +514,6 @@ async fn launch_workbuddy(force: Option<bool>) -> Result<(), String> {
         if cdp_ok {
             return Ok(());
         }
-        // 运行中但没开 CDP（含托盘残留实例）→ 优雅关闭后带 CDP 重启，
-        // 保证点击「启动/切换」后客户端窗口真正出现且可被 daemon 刷新
         let running = std::process::Command::new("tasklist")
             .args(["/FI", "IMAGENAME eq WorkBuddy.exe", "/FO", "CSV"])
             .creation_flags(CREATE_NO_WINDOW)
@@ -430,8 +542,50 @@ async fn launch_workbuddy(force: Option<bool>) -> Result<(), String> {
         }
         spawn_workbuddy_with_cdp()
     }
-    #[cfg(not(target_os = "windows"))]
-    Err("仅支持 Windows".to_string())
+    #[cfg(target_os = "macos")]
+    {
+        let force = force.unwrap_or(false);
+        let exe = resolve_client_exe("WorkBuddy").ok_or("未找到 WorkBuddy 应用")?;
+        let app_name = exe.file_stem().and_then(|s| s.to_str()).unwrap_or("WorkBuddy");
+        // 检查 CDP 是否已开
+        let cdp_ok = std::process::Command::new("curl")
+            .args(["-s", "--connect-timeout", "2", "http://127.0.0.1:9222/json/version"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("200"))
+            .unwrap_or(false);
+        if cdp_ok {
+            return Ok(());
+        }
+        let running = std::process::Command::new("pgrep")
+            .args(["-x", "Electron"])
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout).lines().any(|pid| {
+                    if let Ok(args) = std::process::Command::new("ps")
+                        .args(["-p", pid.trim(), "-o", "command="])
+                        .output()
+                    {
+                        String::from_utf8_lossy(&args.stdout).contains(app_name)
+                    } else { false }
+                })
+            })
+            .unwrap_or(false);
+        if force && running {
+            let _ = std::process::Command::new("osascript")
+                .args(["-e", &format!("quit app \"{}\"", app_name)])
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+        } else if running {
+            return Err("CB_RUNNING_NO_CDP".to_string());
+        }
+        std::process::Command::new("open")
+            .args(["-g", "-a", &exe.display().to_string(), "--args", "--remote-debugging-port=9222"])
+            .spawn()
+            .map_err(|e| format!("启动 WorkBuddy 失败: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Err("仅支持 Windows / macOS".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -463,38 +617,6 @@ fn spawn_workbuddy_with_cdp() -> Result<(), String> {
         }
     }
     Err("未找到 WorkBuddy.exe".to_string())
-}
-
-/// 开/关随系统启动（写入当前用户注册表，不需要管理员权限）。
-#[tauri::command]
-fn set_autostart(enable: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        if enable {
-            std::process::Command::new("reg")
-                .args([
-                    "add",
-                    RUN_KEY,
-                    "/v",
-                    "WorkPet",
-                    "/t",
-                    "REG_SZ",
-                    "/d",
-                    &format!("\"{}\"", exe.display()),
-                    "/f",
-                ])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-                .map_err(|e| e.to_string())?;
-        } else {
-            let _ = std::process::Command::new("reg")
-                .args(["delete", RUN_KEY, "/v", "WorkPet", "/f"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
-        }
-    }
-    Ok(())
 }
 
 // ---------------- 托盘 ----------------
@@ -562,7 +684,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 单实例保护：已有 workpet.exe 在运行则直接退出
+    // 单实例保护：已有 work-pet 在运行则直接退出
     #[cfg(target_os = "windows")]
     {
         if let Ok(out) = std::process::Command::new("tasklist")
@@ -575,6 +697,27 @@ pub fn run() {
                 std::process::exit(0);
             }
         }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let lock_path = std::env::temp_dir().join("work-pet.lock");
+        if lock_path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&lock_path) {
+                let other_pid: u32 = contents.trim().parse().unwrap_or(0);
+                if other_pid != 0 {
+                    if std::process::Command::new("kill")
+                        .args(["-0", &other_pid.to_string()])
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false)
+                    {
+                        eprintln!("[single-instance] 已有实例在运行，退出");
+                        std::process::exit(0);
+                    }
+                }
+            }
+        }
+        let _ = std::fs::write(&lock_path, std::process::id().to_string());
     }
 
     tauri::Builder::default()

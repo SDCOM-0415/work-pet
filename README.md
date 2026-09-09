@@ -9,7 +9,7 @@
 零侵入、零重签名——后台服务无头运行，经 CDP 与各客户端交互，完成签到与账号管理。
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blueviolet)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20macOS-lightgrey)
 ![Node](https://img.shields.io/badge/node-bundled-green)
 
 ## 支持的客户端
@@ -80,11 +80,25 @@
 
 ## 安装
 
+### Windows
+
 1. 在 [Releases](../../releases)（或 Actions 构建产物）下载最新的 Windows 安装包（如 `WorkPet_x64-setup.exe`）
 2. 双击安装器完成安装
 3. 打开 `Work Pet`：首次使用请先在各 AI 客户端登录一次账号，Work Pet 会自动备份进账号库
 
-> 无需安装 Node.js / Python——运行时已随安装包捆绑。
+### macOS（Universal，Apple Silicon + Intel）
+
+1. 在 [Releases](../../releases)（或 Actions 构建产物）下载 `WorkPet-universal.dmg`
+2. 双击挂载 DMG，将 `WorkPet.app` 拖入「应用程序」
+3. 首次启动时如需从"App 商店未识别的应用"放行：系统偏好设置 → 隐私与安全性 → 仍要打开
+4. 打开 `Work Pet`：首次使用请先在各 AI 客户端登录一次账号，Work Pet 会自动备份进账号库
+
+> 无需安装 Node.js / Python——运行时已随安装包捆绑（x86_64 与 arm64 通用二进制，双架构自动运行）。
+
+> **macOS 注意事项（AutoClaw）**
+>
+> - 首次运行若本机登录过 AutoClaw，macOS 会弹出钥匙串授权框（允许访问 `autoclaw Safe Storage`），**请点击「始终允许」**，否则无法读取 AutoClaw 账号与积分；授权一次后不再打扰。
+> - AutoClaw 登录态在 macOS 上读取自 `~/Library/Application Support/autoclaw/auth.json`（对应 Windows 的 `%APPDATA%\autoclaw\auth.json`），解密逻辑已按 macOS 钥匙串实现。
 
 ---
 

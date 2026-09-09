@@ -22,6 +22,8 @@ const http = require('http');
 const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
+const isMac = process.platform === 'darwin';
+
 const APP_BRAND = 'TraeWork';
 const DAEMON_VERSION = '1.0.2';
 const APP_VERSION = DAEMON_VERSION;
@@ -36,40 +38,162 @@ const CHECKIN_PATH = '/trae/api/v2/ug/checkin_credits/';
 const CHECKIN_REQUEST_TIMEOUT_MS = 12000;
 
 // ---------------- 路径探测 ----------------
-const EXE_CANDIDATES = [
-  'D:/Program Files/TRAE SOLO CN/TRAE SOLO CN.exe',
-  path.join(process.env.ProgramFiles || 'C:/Program Files', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-  path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-  path.join(process.env.LOCALAPPDATA || '', 'Programs', 'TRAE SOLO CN', 'TRAE SOLO CN.exe'),
-];
-const DATA_DIR_CANDIDATES = [
-  path.join(os.homedir(), 'AppData', 'Roaming', 'TRAE SOLO CN'),
-  path.join(os.homedir(), 'AppData', 'Roaming', 'TraeWork'),
-];
+const USER_DATA_ROOT = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support')
+  : path.join(os.homedir(), 'AppData', 'Roaming');
 
-function detectPaths() {
-  const exe = EXE_CANDIDATES.find((f) => f && fs.existsSync(f)) || '';
-  // 优先挑「storage.json 里带 iCubeAuthInfo（当前已登录）」的 Trae 目录，
-  // 避免装了两个 Trae（如 Trae CN 已登录、TRAE SOLO CN 已登出）时读到无登录态的目录。
-  const roam = path.join(os.homedir(), 'AppData', 'Roaming');
+const EXE_CANDIDATES = isMac
+  ? [
+      '/Applications/TRAE SOLO CN.app/Contents/MacOS/TRAE SOLO CN',
+      '/Applications/Trae CN.app/Contents/MacOS/Trae CN',
+      '/Applications/Trae.app/Contents/MacOS/Trae',
+      path.join(
+        os.homedir(),
+        'Applications',
+        'TRAE SOLO CN.app',
+        'Contents',
+        'MacOS',
+        'TRAE SOLO CN'
+      ),
+      path.join(
+        os.homedir(),
+        'Applications',
+        'Trae CN.app',
+        'Contents',
+        'MacOS',
+        'Trae CN'
+      ),
+      path.join(
+        os.homedir(),
+        'Applications',
+        'Trae.app',
+        'Contents',
+        'MacOS',
+        'Trae'
+      ),
+    ]
+  : [
+      'D:/Program Files/TRAE SOLO CN/TRAE SOLO CN.exe',
+      path.join(
+        process.env.ProgramFiles || 'C:/Program Files',
+        'TRAE SOLO CN',
+        'TRAE SOLO CN.exe'
+      ),
+      path.join(
+        process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)',
+        'TRAE SOLO CN',
+        'TRAE SOLO CN.exe'
+      ),
+      path.join(
+        process.env.LOCALAPPDATA || '',
+        'Programs',
+        'TRAE SOLO CN',
+        'TRAE SOLO CN.exe'
+      ),
+    ];
+
+const DATA_DIR_CANDIDATES = [
+  'TRAE SOLO CN',
+  'Trae CN',
+  'TraeWork',
+  'Trae',
+].map((name) => path.join(USER_DATA_ROOT, name));
+
+function findTraeExecutable() {
+  const direct = EXE_CANDIDATES.find((f) => f && fs.existsSync(f));
+  if (direct) return direct;
+
+  if (!isMac) return '';
+
+  // macOS 兜底：
+  // 扫描 /Applications 与 ~/Applications 中名称包含 Trae 的 .app。
+  for (const root of [
+    '/Applications',
+    path.join(os.homedir(), 'Applications'),
+  ]) {
+    let apps = [];
+
+    try {
+      apps = fs
+        .readdirSync(root)
+        .filter((name) => /trae/i.test(name) && name.endsWith('.app'));
+    } catch (_) {}
+
+    for (const app of apps) {
+      const macosDir = path.join(root, app, 'Contents', 'MacOS');
+
+      let bins = [];
+      try {
+        bins = fs.readdirSync(macosDir);
+      } catch (_) {}
+
+      for (const bin of bins) {
+        const full = path.join(macosDir, bin);
+
+        try {
+          if (fs.statSync(full).isFile()) return full;
+        } catch (_) {}
+      }
+    }
+  }
+
+  return '';
+}
+
+function findTraeDataDir() {
+  // 保留上游 v1.0.2 的逻辑：
+  // 多个 Trae 客户端并存时，优先选择 storage.json 中
+  // 真正含 iCubeAuthInfo 登录态的目录。
   const scanDirs = [...DATA_DIR_CANDIDATES];
+
   try {
-    for (const name of fs.readdirSync(roam)) {
-      if (/trae/i.test(name)) scanDirs.push(path.join(roam, name));
+    for (const name of fs.readdirSync(USER_DATA_ROOT)) {
+      if (!/trae/i.test(name)) continue;
+
+      const dir = path.join(USER_DATA_ROOT, name);
+
+      if (!scanDirs.includes(dir)) {
+        scanDirs.push(dir);
+      }
     }
   } catch (_) {}
-  let dataDir = '';
-  for (const d of scanDirs) {
-    if (!d || !fs.existsSync(d)) continue;
-    const storage = path.join(d, 'User', 'globalStorage', 'storage.json');
+
+  for (const dir of scanDirs) {
+    if (!dir || !fs.existsSync(dir)) continue;
+
+    const storage = path.join(
+      dir,
+      'User',
+      'globalStorage',
+      'storage.json'
+    );
+
     if (!fs.existsSync(storage)) continue;
+
     try {
-      if (fs.readFileSync(storage, 'utf8').includes('iCubeAuthInfo://')) { dataDir = d; break; }
+      if (
+        fs
+          .readFileSync(storage, 'utf8')
+          .includes('iCubeAuthInfo://')
+      ) {
+        return dir;
+      }
     } catch (_) {}
   }
-  // 都没有登录态时退回第一个存在的目录（后续 getAuth 会给出明确错误）
-  if (!dataDir) dataDir = DATA_DIR_CANDIDATES.find((d) => d && fs.existsSync(d)) || '';
-  return { exe, dataDir };
+
+  // 都没有有效登录态时，回退到第一个实际存在的数据目录。
+  for (const dir of scanDirs) {
+    if (dir && fs.existsSync(dir)) return dir;
+  }
+
+  return '';
+}
+
+function detectPaths() {
+  return {
+    exe: findTraeExecutable(),
+    dataDir: findTraeDataDir(),
+  };
 }
 
 let CFG = { exe: '', dataDir: '' };
@@ -123,15 +247,16 @@ function getAuth() {
 
 // ---------------- 便携数据目录 ----------------
 // 账号备份/设置/积分缓存全部存放在数据目录（默认与 daemon.js 同目录）；
-// 由 pet.exe 拉起时通过环境变量指定为 exe 同目录，不写 C 盘 AppData。
-// exe 不可写时回退到 %APPDATA%\WorkPet。
+// Windows 继续使用便携目录；macOS 由桌面端指定到 ~/Library/Application Support/WorkPet。
+// 目录不可写时回退到平台标准用户数据目录。
 let DATA_ROOT =
   (process.env.WORKPET_DATA_DIR && fs.existsSync(process.env.WORKPET_DATA_DIR))
     ? process.env.WORKPET_DATA_DIR
     : __dirname;
-// 数据目录不可写（exe 被放在只读位置）时回退到 %APPDATA%\WorkPet
 const FALLBACK_DATA_DIR = path.join(
-  process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+  isMac
+    ? path.join(os.homedir(), 'Library', 'Application Support')
+    : (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')),
   'WorkPet'
 );
 try {
@@ -246,7 +371,7 @@ function backupCurrentAccount() {
  * 都能显示」。只读别的客户端 storage，绝不写回别人。
  */
 function collectAllTraeAccounts() {
-  const roam = path.join(os.homedir(), 'AppData', 'Roaming');
+  const roam = USER_DATA_ROOT;
   let dirs = [];
   try { dirs = fs.readdirSync(roam).filter((n) => /trae/i.test(n)); } catch (_) {}
   const saved = [];
@@ -451,7 +576,7 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'tw'], tabShowText: false, hidePet: true };
+const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: isMac, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'tw'], tabShowText: false, hidePet: true };
 // 旧配置兼容：TraeWork Tab 的 key 原为 'accounts'，v1.0.2 起统一为 'tw'
 function normalizeTabOrder(v) {
   if (!Array.isArray(v)) return null;
@@ -589,10 +714,16 @@ async function claimViaApp(timeoutMs = 150000) {
 // 恢复时写回各自位置即可在新电脑上使用。
 // WB/CB 账号备份目录：WorkPet 自有目录。旧版曾借用 WorkDaddy 目录存放，
 // 首次运行把旧目录文件搬迁过来（只读复制，旧目录原样保留）。
-const SHARED_DATA_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkPet', 'clients');
+const APP_DATA_ROOT = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support')
+  : (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'));
+const LOCAL_DATA_ROOT = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support')
+  : (process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'));
+const SHARED_DATA_DIR = path.join(APP_DATA_ROOT, 'WorkPet', 'clients');
 const WB_ACCOUNTS_DIR = path.join(SHARED_DATA_DIR, 'accounts');
 const CB_ACCOUNTS_DIR = path.join(SHARED_DATA_DIR, 'profiles', 'codebuddy-cn', 'accounts');
-const LEGACY_SHARED_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkDaddy');
+const LEGACY_SHARED_DIR = path.join(APP_DATA_ROOT, 'WorkDaddy');
 function migrateLegacySharedDir(rel) {
   try {
     const dstDir = path.join(SHARED_DATA_DIR, rel);
@@ -608,7 +739,7 @@ function migrateLegacySharedDir(rel) {
 }
 migrateLegacySharedDir('accounts');
 migrateLegacySharedDir(path.join('profiles', 'codebuddy-cn', 'accounts'));
-const EXT_AUTH_DIR = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'CodeBuddyExtension', 'Data', 'Public', 'auth');
+const EXT_AUTH_DIR = path.join(LOCAL_DATA_ROOT, 'CodeBuddyExtension', 'Data', 'Public', 'auth');
 const WB_AUTH_FILE = path.join(EXT_AUTH_DIR, 'workbuddy-desktop.info');
 const CB_AUTH_FILE = path.join(EXT_AUTH_DIR, 'Tencent-Cloud.coding-copilot.info');
 
@@ -776,7 +907,10 @@ const { extractCreditSegments, sortCreditSegments, mergeCreditSegments } = requi
 // 积分 = GET /agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw（total_points / expiring_points）。
 // 签名头 = X-Auth-Appid/X-Auth-TimeStamp/X-Auth-Sign（md5(appid&ts&appkey)），token 走 Authorization Bearer。
 // Cookie 时限 = JWT exp（access_token 是 JWT，24h）；refresh 走 /userapi/v1/refresh（refresh_token 轮换，回写 auth.json）。
-const AC_DATA_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'autoclaw');
+// macOS：Electron safeStorage 密钥在登录钥匙串（service "autoclaw Safe Storage"，密码经 PBKDF2 派生 AES key）
+const AC_DATA_DIR = isMac
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'autoclaw')
+  : path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'autoclaw');
 const AC_AUTH_FILE = path.join(AC_DATA_DIR, 'auth.json');
 const AC_LOCAL_STATE = path.join(AC_DATA_DIR, 'Local State');
 const AC_API_HOST = 'https://autoglm-acceleration-api.zhipuai.cn';
@@ -859,20 +993,61 @@ function acDpapiViaPowershell(data) {
   });
 }
 
+// ---------------- macOS：从登录钥匙串读取 safeStorage 密码并派生 AES key ----------------
+// Electron safeStorage 在 macOS 上把随机密码存进登录钥匙串（service "<AppName> Safe Storage"，
+// account "<AppName>"），AES key = PBKDF2-HMAC-SHA1(password, salt="saltysalt", 1003 次, 16B)。
+// 与 Windows 的 Local State + DPAPI 完全不同的路径；首次读取会弹钥匙串授权框，用户点允许后记住。
+const AC_KEYCHAIN_SERVICE = 'autoclaw Safe Storage';
+const AC_KEYCHAIN_ACCOUNT = 'autoclaw';
+const AC_MAC_PBKDF2_SALT = Buffer.from('saltysalt', 'utf8');
+const AC_MAC_PBKDF2_ITERS = 1003;
+
+function acMacDeriveKey(keychainPassword) {
+  return crypto.pbkdf2Sync(keychainPassword, AC_MAC_PBKDF2_SALT, AC_MAC_PBKDF2_ITERS, 16, 'sha1');
+}
+
+/** 异步读钥匙串密码（spawn security；15s 超时，不阻塞事件循环，与 Windows powershell 路径同理） */
+function acMacReadPasswordAsync() {
+  return new Promise((resolve, reject) => {
+    const child = spawn('security', ['find-generic-password', '-s', AC_KEYCHAIN_SERVICE, '-a', AC_KEYCHAIN_ACCOUNT, '-w'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill(); } catch (_) {}
+      reject(new Error('AutoClaw 钥匙串读取超时（15s）'));
+    }, 15000);
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', () => {});
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error('AutoClaw 钥匙串启动失败: ' + e.message)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (code !== 0) { reject(new Error('AutoClaw 钥匙串读取失败(exit ' + code + ')')); return; }
+      const pw = out.trim();
+      if (!pw) { reject(new Error('AutoClaw 钥匙串密码为空')); return; }
+      resolve(acMacDeriveKey(pw));
+    });
+  });
+}
+
 /** 获取 AutoClaw AES key：只解一次并缓存；并发调用共享同一个 Promise */
 function acRequestKey() {
   if (acKeyCache) return Promise.resolve(acKeyCache);
   if (!acKeyPromise) {
-    acKeyPromise = (async () => {
-      const ls = readJsonOrNull(AC_LOCAL_STATE);
-      const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
-      if (!enc) throw new Error('AutoClaw Local State 无 os_crypt.encrypted_key');
-      const raw = Buffer.from(enc, 'base64');
-      if (raw.slice(0, 5).toString() !== 'DPAPI') return raw;
-      const viaNative = acDpapiNative(raw.slice(5));
-      if (viaNative) return viaNative;
-      return await acDpapiViaPowershell(raw.slice(5));
-    })().then((k) => { acKeyCache = k; acKeyPromise = null; return k; })
+    acKeyPromise = (isMac
+      ? acMacReadPasswordAsync()
+      : (async () => {
+          const ls = readJsonOrNull(AC_LOCAL_STATE);
+          const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
+          if (!enc) throw new Error('AutoClaw Local State 无 os_crypt.encrypted_key');
+          const raw = Buffer.from(enc, 'base64');
+          if (raw.slice(0, 5).toString() !== 'DPAPI') return raw;
+          const viaNative = acDpapiNative(raw.slice(5));
+          if (viaNative) return viaNative;
+          return await acDpapiViaPowershell(raw.slice(5));
+        })()
+    ).then((k) => { acKeyCache = k; acKeyPromise = null; return k; })
       .catch((e) => { acKeyPromise = null; throw e; });
   }
   return acKeyPromise;
@@ -889,18 +1064,26 @@ function acKeySync() {
   throw AC_KEY_PENDING;
 }
 
-/** 纯 AES-256-GCM 解密单个 token；key 可显式传入（异步路径）或走缓存（同步路径） */
+/** 纯 AES 解密单个 token；key 可显式传入（异步路径）或走缓存（同步路径）。
+ *  Windows: v10 + nonce(12) + ciphertext + tag(16)，AES-256-GCM，key 来自 DPAPI。
+ *  macOS:   v10 + ciphertext，AES-128-CBC（IV 固定 16 空格，PKCS7），key 来自钥匙串 PBKDF2 派生。 */
 function acDecryptToken(encStr, key) {
   if (!encStr) return '';
   if (!encStr.startsWith('enc:')) return encStr.replace(/^Bearer\s+/, '');
   const raw = Buffer.from(encStr.slice(4), 'base64');
   if (raw.slice(0, 3).toString() !== 'v10') return encStr.replace(/^Bearer\s+/, '');
   const k = key || acKeySync(); // 同步路径未就绪时抛 AC_KEY_PENDING
-  const nonce = raw.slice(3, 15), ct = raw.slice(15);
-  const tag = ct.slice(ct.length - 16), body = ct.slice(0, ct.length - 16);
-  const dec = crypto.createDecipheriv('aes-256-gcm', k, nonce);
-  dec.setAuthTag(tag);
-  const pt = Buffer.concat([dec.update(body), dec.final()]);
+  let pt;
+  if (isMac) {
+    const dec = crypto.createDecipheriv('aes-128-cbc', k, Buffer.alloc(16, 0x20));
+    pt = Buffer.concat([dec.update(raw.slice(3)), dec.final()]);
+  } else {
+    const nonce = raw.slice(3, 15), ct = raw.slice(15);
+    const tag = ct.slice(ct.length - 16), body = ct.slice(0, ct.length - 16);
+    const dec = crypto.createDecipheriv('aes-256-gcm', k, nonce);
+    dec.setAuthTag(tag);
+    pt = Buffer.concat([dec.update(body), dec.final()]);
+  }
   return pt.toString('utf8').replace(/^Bearer\s+/, '');
 }
 
@@ -1004,9 +1187,16 @@ async function acPersistRefreshedToken(newAccess, newRefresh) {
   try {
     const raw = readJsonOrNull(AC_AUTH_FILE);
     if (!raw) return false;
-    // 尝试用同 key 重新加密（Electron safeStorage v10 = AES-256-GCM，key 已解出）
+    // 尝试用同 key 重新加密（保持各平台 Electron safeStorage 原生格式，AutoClaw 自身可读回）
     const key = await acRequestKey();
     const enc = (plain) => {
+      if (isMac) {
+        // macOS：enc: + base64(v10 + AES-128-CBC 密文)，IV 固定 16 空格
+        const cipher = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+        const ct = Buffer.concat([cipher.update(Buffer.from(plain, 'utf8')), cipher.final()]);
+        return 'enc:' + Buffer.concat([Buffer.from('v10', 'utf8'), ct]).toString('base64');
+      }
+      // Windows：v10 + nonce(12) + ciphertext + tag(16)，AES-256-GCM
       const nonce = crypto.randomBytes(12);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
       const ct = Buffer.concat([cipher.update(Buffer.from(plain, 'utf8')), cipher.final()]);
@@ -1202,8 +1392,104 @@ function clientTokenFor(profileId, uid) {
   return rec.accessToken || null; // ac 段账号记录直接存 accessToken
 }
 
+/** AutoClaw 调试端口（CDP）是否已在监听（复用中，无需重复拉起） */
+async function isAcCdpUp(port) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(800) });
+    if (!r.ok) return false;
+    const o = await r.json().catch(() => ({}));
+    return !!(o && o.webSocketDebuggerUrl);
+  } catch (_) { return false; }
+}
+
+/** 启动 AutoClaw（带 --remote-debugging-port，供 CDP 签到所用）；不做 download 等待，只需拉起 */
+function acLaunchBinary() {
+  const port = CLIENT_PROFILES.ac.cdpPort;
+  // 复用已运行的调试实例
+  return isAcCdpUp(port).then((up) => {
+    if (up) { log('[client:ac] CDP 已在监听，复用现有 AutoClaw'); return 'reuse'; }
+    const exe = isMac
+      ? '/Applications/AutoClaw.app/Contents/MacOS/AutoClaw'
+      : ['D:/Program Files/AutoClaw/AutoClaw.exe',
+         path.join(process.env.ProgramFiles || 'C:/Program Files', 'AutoClaw', 'AutoClaw.exe'),
+         path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw', 'AutoClaw.exe')]
+        .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
+    if (!exe) throw new Error('未找到 AutoClaw 可执行文件');
+    const args = ['--remote-debugging-port=' + port];
+    let child;
+    if (isMac) {
+      // macOS 走 open -n，避免直接 spawn .app 内二进制丢环境
+      child = spawn('open', ['-n', exe, '--args', '--remote-debugging-port=' + port], { stdio: 'ignore', detached: true });
+    } else {
+      child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    }
+    child.unref();
+    log(`[client:ac] 已拉起 AutoClaw (--remote-debugging-port=${port})`);
+    return 'launched';
+  });
+}
+
+/**
+ * AutoClaw CDP 点击签到（方案1，macOS 优先）：当 AutoClaw 正以 --remote-debugging-port 运行时，
+ * 经 CDP 找到「每日签到」按钮点击，让 AutoClaw 用自己内存中的登录态完成签到，
+ * 从而完全绕开 auth.json 的 AES key 解密（macOS 上钥匙串密码与实际 key 不匹配的坑）。
+ *
+ * 仅在界面可见「签到」且未显示「已完成/已签到」时触发；成功返回 { cdp: true, already }。
+ */
+async function acCdpClickSignin() {
+  const ports = [9226, 9225, 9224, 9223, 9222, 9227, 9228];
+  let lastErr = null;
+  for (const port of ports) {
+    let ws = null;
+    try {
+      const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1200) }).then(r => r.json()).catch(() => null);
+      if (!Array.isArray(list)) { lastErr = `port${port}不可达`; continue; }
+      const target = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl && /AutoClaw|autoclaw/i.test(t.title || ''));
+      if (!target) { lastErr = `port${port}无AutoClaw页面`; continue; }
+      ws = new WebSocket(target.webSocketDebuggerUrl);
+      await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('ws连接失败')); });
+      let id = 0; const pend = new Map();
+      ws.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m.id && pend.has(m.id)) { const { res, rej } = pend.get(m.id); pend.delete(m.id); m.error ? rej(new Error(m.error.message)) : res(m.result); } } catch (_) {} };
+      const send = (method, params = {}) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
+      const evalJs = (expression) => send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }).then(r => r.result && r.result.value);
+      // 检查签到区状态
+      const state = await evalJs(`(() => { const t = (document.body && document.body.innerText) || '';
+        const doneBtn = [...document.querySelectorAll('button')].some(b => /已.?完成|已签.{1,3}天/i.test((b.textContent||'').trim()));
+        return { textHasDone: /已.?完成|已签.{1,3}天/i.test(t) }; })()`);
+      if (state && state.textHasDone) {
+        log('[client:ac] CDP 检查：今日已签到（界面显示已完成），跳过');
+        return { cdp: true, already: true };
+      }
+      // 点击「签到」按钮（避免点到「去邀请」「已完成」等）
+      const clicked = await evalJs(`(() => { const btns = [...document.querySelectorAll('button')];
+        const b = btns.find(x => /^签到$|^签\s*到$/.test((x.textContent||'').trim()));
+        if (b) { b.click(); return 'clicked'; }
+        return 'notfound'; })()`);
+      if (clicked !== 'clicked') { lastErr = '未找到「签到」按钮'; continue; }
+      log('[client:ac] CDP 已点击「签到」按钮，等待 AutoClaw 自行完成...');
+      await new Promise(r => setTimeout(r, 6000));
+      // 回读结果（界面是否变为已完成/已签）
+      const after = await evalJs(`(() => { const t = (document.body && document.body.innerText) || '';
+        return { done: /已.?完成|已签.{1,3}天/i.test(t), around: (t.match(/每日签到得[\\s\\S]{0,120}/) || [])[0] || '' }; })()`);
+      return { cdp: true, already: false, message: '已触发 AutoClaw 自己签到', body: { after } };
+    } catch (e) {
+      lastErr = e.message;
+    } finally {
+      if (ws) { try { ws.close(); } catch (_) {} }
+    }
+  }
+  throw new Error('CDP 点击签到失败: ' + lastErr);
+}
+
 /** AutoClaw 签到 = 任务中心 daily_signin 任务完成（每日 200 分）；响应 data.already_completed = 已签 */
 async function acDailyCheckin(accessToken) {
+  // 方案1（macOS 优先）：AutoClaw 若以调试模式运行且界面可签到，用 CDP 点击让应用自己签
+  if (isMac) {
+    try {
+      const r = await acCdpClickSignin();
+      return { ok: true, ...r, code: 0 };
+    } catch (_) { /* 未运行调试模式或点击失败 → 回退 API 方式 */ }
+  }
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await sleep(2000);
@@ -2374,9 +2660,17 @@ async function injectWidget(reason) {
 }
 
 // ---------------- 进程管理（确保 TraeWork 以 CDP 模式运行） ----------------
-const EXE_NAME = path.basename(CFG.exe || 'TRAE SOLO CN.exe');
+const EXE_NAME = isMac
+  ? path.basename(CFG.exe || 'TRAE SOLO CN')
+  : path.basename(CFG.exe || 'TRAE SOLO CN.exe');
 
 function isProcessRunning() {
+  if (isMac) {
+    try {
+      const out = execFileSync('pgrep', ['-f', '(/TRAE SOLO CN|/Trae CN|/TraeWork|/Trae)(\s|$)'], { encoding: 'utf8' });
+      return Boolean(out.trim());
+    } catch (_) { return false; }
+  }
   try {
     const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq ' + EXE_NAME, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
     return out.includes(EXE_NAME);
@@ -2384,7 +2678,17 @@ function isProcessRunning() {
 }
 
 function killTraeWork() {
-  try { execFileSync('taskkill', ['/IM', EXE_NAME, '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+  if (isMac) {
+    // 优先按已探测到的可执行路径结束，避免依赖固定 app 名称。
+    if (CFG.exe) {
+      try { execFileSync('pkill', ['-f', CFG.exe], { stdio: 'ignore' }); } catch (_) {}
+    }
+    for (const appName of ['TRAE SOLO CN', 'Trae CN', 'TraeWork', 'Trae']) {
+      try { execFileSync('osascript', ['-e', `tell application "${appName}" to quit`], { stdio: 'ignore' }); } catch (_) {}
+    }
+  } else {
+    try { execFileSync('taskkill', ['/IM', EXE_NAME, '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+  }
 }
 
 async function ensureTraeWorkWithCdp() {
@@ -2401,7 +2705,12 @@ async function ensureTraeWorkWithCdp() {
   // 最多两轮拉起：进程中途退出（单实例锁残留）时自动重试一次
   for (let attempt = 1; attempt <= 2; attempt++) {
     log(`[proc] 启动: ${CFG.exe} --remote-debugging-port=${CDP_PORT} (第 ${attempt} 次)`);
-    spawn(CFG.exe, ['--remote-debugging-port=' + CDP_PORT], { stdio: 'ignore', detached: true });
+    if (isMac) {
+      // 直接启动 .app 内真实可执行文件，参数可稳定传给 Electron 主进程。
+      spawn(CFG.exe, ['--remote-debugging-port=' + CDP_PORT], { stdio: 'ignore', detached: true });
+    } else {
+      spawn(CFG.exe, ['--remote-debugging-port=' + CDP_PORT], { stdio: 'ignore', detached: true });
+    }
     const deadline = Date.now() + CDP_STARTUP_TIMEOUT_MS;
     while (Date.now() < deadline) {
       const port = await findCdpEndpoint().catch(() => 0);
@@ -2417,24 +2726,34 @@ async function ensureTraeWorkWithCdp() {
 // ---------------- 主流程 ----------------
 async function main() {
   CFG = detectPaths();
-  if (!CFG.dataDir) { log('未找到 TraeWork 数据目录，退出'); process.exit(1); }
-  if (!CFG.exe) log('警告：未找到 TraeWork 可执行文件（仅本地 API 可用）');
-  log('dataDir=' + CFG.dataDir + ' exe=' + (CFG.exe || '(未找到)'));
-  const auth = getAuth();
-  if (auth.error) log('[auth] ' + auth.error);
-  else log('[auth] user=' + auth.userId + ' scope=' + ((auth.account && auth.account.scope) || '?') + ' deviceId=' + auth.deviceId);
-  // 每次启动自动备份当前登录账号，保证多账号列表始终包含正在用的账号
-  try {
-    const r = backupCurrentAccount();
-    log('[accounts] 已备份当前账号 ' + r.nickname + ' (' + r.uid + ')');
-  } catch (e) {
-    log('[accounts] 备份当前账号失败: ' + e.message);
+  if (!CFG.dataDir) {
+    // WorkPet 还承载 WorkBuddy / CodeBuddy；没有安装或登录 TraeWork 时也必须启动本地 API。
+    log('警告：未找到 TraeWork 数据目录，TraeWork 功能暂不可用（WorkBuddy / CodeBuddy 仍可使用）');
   }
-  try {
-    const extra = collectAllTraeAccounts();
-    if (extra.length) log('[accounts] 跨客户端收集账号: ' + extra.join(', '));
-  } catch (e) {
-    log('[accounts] 跨客户端收集失败: ' + e.message);
+  if (!CFG.exe) log('警告：未找到 TraeWork 可执行文件（仅本地 API 和其它客户端功能可用）');
+  log('dataDir=' + (CFG.dataDir || '(未找到)') + ' exe=' + (CFG.exe || '(未找到)'));
+
+  if (CFG.dataDir) {
+    try {
+      const auth = getAuth();
+      if (auth.error) log('[auth] ' + auth.error);
+      else log('[auth] user=' + auth.userId + ' scope=' + ((auth.account && auth.account.scope) || '?') + ' deviceId=' + auth.deviceId);
+    } catch (e) {
+      log('[auth] 读取 TraeWork 登录态失败: ' + e.message);
+    }
+    // 每次启动自动备份当前登录账号，保证多账号列表始终包含正在用的账号
+    try {
+      const r = backupCurrentAccount();
+      log('[accounts] 已备份当前账号 ' + r.nickname + ' (' + r.uid + ')');
+    } catch (e) {
+      log('[accounts] 备份当前账号失败: ' + e.message);
+    }
+    try {
+      const extra = collectAllTraeAccounts();
+      if (extra.length) log('[accounts] 跨客户端收集账号: ' + extra.join(', '));
+    } catch (e) {
+      log('[accounts] 跨客户端收集失败: ' + e.message);
+    }
   }
 
   server.on('error', (e) => {
@@ -2513,19 +2832,12 @@ async function main() {
     })();
   }, 5 * 60 * 1000).unref();
 
-  // 设置项：打开 Pet 时同时启动 AutoClaw（默认关闭）
-  if (settings.acLaunchOnStart) {
-    log('[proc] 设置项开启：启动时拉起 AutoClaw');
-    try {
-      const exe = ['D:/Program Files/AutoClaw/AutoClaw.exe',
-        path.join(process.env.ProgramFiles || 'C:/Program Files', 'AutoClaw', 'AutoClaw.exe'),
-        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw', 'AutoClaw.exe')]
-        .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
-      if (exe) spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      else log('[proc] 未找到 AutoClaw.exe，跳过拉起');
-    } catch (e) {
-      log('[proc] 拉起 AutoClaw 异常: ' + e.message);
-    }
+  // macOS 专属：每次启动都拉起 AutoClaw（带调试端口供 CDP 签到）；Windows 保持由设置项 acLaunchOnStart 控制
+  if (isMac || settings.acLaunchOnStart) {
+    log('[proc] 启动时拉起 AutoClaw（macOS 强制，其余平台按设置）');
+    acLaunchBinary()
+      .then((how) => log('[proc] AutoClaw 拉起结果: ' + how))
+      .catch((e) => log('[proc] 拉起 AutoClaw 异常: ' + e.message));
   }
 
   // 桌面版：宠物/面板由 Rust 桌面客户端承载，不再向 TraeWork 注入 JS。
