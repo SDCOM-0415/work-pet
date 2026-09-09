@@ -192,7 +192,7 @@ fn launch_codebuddy_cli() -> Result<(), String> {
 /// 已开 CDP 端口 → 直接返回；正在运行但没开端口 → 优雅关闭后带 CDP 重启；
 /// 未安装 → 返回错误。AutoClaw 是 Electron，`--remote-debugging-port` 原生支持。
 #[tauri::command]
-async fn launch_autoclaw(force: Option<bool>) -> Result<(), String> {
+async fn launch_autoclaw(force: Option<bool>) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
@@ -220,7 +220,7 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<(), String> {
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("True"))
             .unwrap_or(false);
         if cdp_ok {
-            return Ok(());
+            return Ok("AC_REUSED".into());
         }
 
         let running = std::process::Command::new("tasklist")
@@ -257,10 +257,44 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<(), String> {
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("启动 AutoClaw 失败: {e}"))?;
-        return Ok(());
+        Ok("AC_LAUNCHED".into())
     }
-    #[cfg(not(target_os = "windows"))]
-    Err("仅支持 Windows".to_string())
+    #[cfg(target_os = "macos")]
+    {
+        // CDP 调试端口是否已监听（复用现有调试实例）
+        let cdp_ok = std::process::Command::new("sh")
+            .args(["-c", "curl -s --max-time 2 http://127.0.0.1:9226/json/version | grep -q webSocketDebuggerUrl"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if cdp_ok {
+            return Ok("AC_REUSED".into());
+        }
+        // AutoClaw 主进程是否在运行
+        let running = std::process::Command::new("pgrep")
+            .args(["-f", "AutoClaw.app/Contents/MacOS/AutoClaw"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if running && !force.unwrap_or(false) {
+            // 运行中但未开调试端口 → 前端转成「确认重启」二次点击
+            return Err("AC_RUNNING_NO_CDP".into());
+        }
+        if running {
+            // force 重启：先退出，避免单实例锁拒绝新实例
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "AutoClaw.app/Contents/MacOS/AutoClaw"])
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+        }
+        std::process::Command::new("open")
+            .args(["-n", "/Applications/AutoClaw.app", "--args", "--remote-debugging-port=9226"])
+            .spawn()
+            .map_err(|e| format!("启动 AutoClaw 失败: {e}"))?;
+        return Ok("AC_LAUNCHED".into());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Err("仅支持 Windows / macOS".to_string())
 }
 
 /// 查询 daemon 自举是否完成（前端启动时轮询，避免错过一次性事件）。
@@ -720,7 +754,7 @@ pub fn run() {
         let _ = std::fs::write(&lock_path, std::process::id().to_string());
     }
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(BootstrapState::default())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -773,6 +807,22 @@ pub fn run() {
             quit_app,
             open_external
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running WorkPet");
+        .build(tauri::generate_context!())
+        .expect("failed to build WorkPet");
+
+    // macOS：点击 dock 图标（reopen）时恢复隐藏的宠物窗口
+    // 注意：Reopen 变体仅存在于 macOS，其他平台用 cfg 跳过以避免编译错误
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            if let Some(win) = app_handle.get_webview_window("pet") {
+                let _ = win.show();
+                let _ = win.set_focus();
+                // 通知前端：保持面板展开（否则 hidePet 的 effect 会再次隐藏窗口）
+                let _ = app_handle.emit("tray-event", "open-panel");
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = event;
+    });
 }
