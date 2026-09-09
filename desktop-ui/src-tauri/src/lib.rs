@@ -811,7 +811,9 @@ pub fn run() {
         .expect("failed to build WorkPet");
 
     // macOS：点击 dock 图标（reopen）时恢复隐藏的宠物窗口
+    // 注意：Reopen 变体仅存在于 macOS，其他平台用 cfg 跳过以避免编译错误
     app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {
             if let Some(win) = app_handle.get_webview_window("pet") {
                 let _ = win.show();
@@ -820,5 +822,7 @@ pub fn run() {
                 let _ = app_handle.emit("tray-event", "open-panel");
             }
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = event;
     });
 }
