@@ -13,9 +13,6 @@ jobs:
   build-windows:
     name: Build (Windows x64)
     runs-on: windows-latest
-    permissions:
-      # tag push 时需要写权限创建 Release（v1.0.2 验证过的模式：单 job 内直接发布）
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -184,15 +181,28 @@ jobs:
           path: desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
-      # 发布：仅正式版 tag（如 v1.0.4）直接从构建目录上传；
-      # beta/rc/alpha 等测试版 tag 只做 CI 构建验证，安装包从 artifacts 下载，不创建 Release。
-      # 诊断信息写入 job summary（匿名浏览器可见），便于发布失败时定位。
-      - name: Publish release (stable tags only)
-        if: >-
-          startsWith(github.ref, 'refs/tags/v') &&
-          !contains(github.ref_name, '-beta') &&
-          !contains(github.ref_name, '-rc') &&
-          !contains(github.ref_name, '-alpha')
+  # 发布：仅正式版 tag（如 v1.0.4）发布双平台安装包；
+  # beta/rc/alpha 等测试版 tag 只做 CI 构建验证，安装包从 artifacts 下载，不创建 Release。
+  # 诊断信息写入 job summary（匿名浏览器可见），便于发布失败时定位。
+  release:
+    name: Publish Release (stable tags)
+    needs: [build-windows, build-macos]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') &&
+      !contains(github.ref_name, '-beta') &&
+      !contains(github.ref_name, '-rc') &&
+      !contains(github.ref_name, '-alpha')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -207,15 +217,24 @@ jobs:
             echo "- gh: $(gh --version | head -1)"
           } >> "$SUM"
 
-          ASSETS=$(find desktop-ui/src-tauri/target/release/bundle/nsis -type f -name "*-setup.exe" 2>/dev/null)
+          # 收集双平台安装包：Windows setup.exe + macOS dmg（.app 目录不打进 release）
+          SETUP=$(find dist -type f -name "*-setup.exe" | head -1)
+          DMG=$(find dist -type f -name "*.dmg" | head -1)
           {
-            echo "- installer files:"
+            echo "- windows setup: \`${SETUP:-NOT_FOUND}\`"
+            echo "- macos dmg: \`${DMG:-NOT_FOUND}\`"
+            echo "- all files:"
             echo '  ```'
-            echo "$ASSETS"
+            find dist -type f -print
             echo '  ```'
           } >> "$SUM"
+
+          ASSETS=""
+          [ -n "$SETUP" ] && ASSETS="$SETUP"
+          [ -n "$DMG" ] && ASSETS="$ASSETS $DMG"
+
           if [ -z "$ASSETS" ]; then
-            echo "ERROR: no *-setup.exe found under bundle/nsis" >> "$SUM"
+            echo "### ERROR: no installer assets found" >> "$SUM"
             exit 1
           fi
 
@@ -224,7 +243,7 @@ jobs:
             gh release upload "$TAG" $ASSETS --clobber --repo "$REPO" 2>&1 | tee -a "$SUM"
             rc=${PIPESTATUS[0]}
           else
-            echo "- creating new stable release: WorkPet ${TAG#v}" >> "$SUM"
+            echo "- creating new stable release: WorkPet ${TAG#v} (windows + macos universal)" >> "$SUM"
             gh release create "$TAG" $ASSETS --repo "$REPO" --title "WorkPet ${TAG#v}" --generate-notes --latest 2>&1 | tee -a "$SUM"
             rc=${PIPESTATUS[0]}
           fi
