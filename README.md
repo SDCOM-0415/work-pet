@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '457a3d15-2ec0-495c-aa8c-0c0377615995'
-  PropagateID: '457a3d15-2ec0-495c-aa8c-0c0377615995'
-  ReservedCode1: '5fdcfbe9-4443-4eba-a310-0da79734eb52'
-  ReservedCode2: '5fdcfbe9-4443-4eba-a310-0da79734eb52'
+  ProduceID: '6e07c97d-6cdf-4f4d-a3de-4e8d240b0657'
+  PropagateID: '6e07c97d-6cdf-4f4d-a3de-4e8d240b0657'
+  ReservedCode1: 'c4b6b3df-e645-4d62-8ca0-380257a22fdc'
+  ReservedCode2: 'c4b6b3df-e645-4d62-8ca0-380257a22fdc'
 ---
 
 # Work Pet 🤖
@@ -31,7 +31,7 @@ AIGC:
     <td align="center"><a href="https://www.codebuddy.cn/"><img src="desktop-ui/src/assets/codebuddy.png" width="40" alt="CodeBuddy"/><br><strong>CodeBuddy</strong></a></td>
     <td align="center"><a href="https://www.trae.cn/work"><img src="desktop-ui/src/assets/traework.png" width="40" alt="TraeWork"/><br><strong>TraeWork</strong></a></td>
     <td align="center"><a href="https://autoclaw.z.ai/"><img src="desktop-ui/src/assets/autoclaw.png" width="40" alt="AutoClaw"/><br><strong>AutoClaw</strong></a></td>
-    <td align="center"><img src="desktop-ui/src/assets/codearts.png" width="40" alt="CodeArts Agent"/><br><strong>CodeArts Agent</strong></td>
+    <td align="center"><a href="https://codearts.huaweicloud.com/download.html"><img src="desktop-ui/src/assets/codearts.png" width="40" alt="CodeArts Agent"/></a><br><strong>CodeArts Agent</strong></td>
   </tr>
 </table>
 
@@ -39,7 +39,7 @@ AIGC:
 - [CodeBuddy](https://www.codebuddy.cn/)：腾讯云代码助手
 - [TraeWork](https://www.trae.cn/work)：字节跳动 TRAE AI 原生工作台
 - [AutoClaw](https://autoclaw.z.ai/)：Z.ai 本地 AI Agent
-- CodeArts Agent：华为云 CodeArts IDE 客户端（多账号登录态管理，无签到）
+- [CodeArts Agent](https://codearts.huaweicloud.com/download.html)：华为云码道代码智能体（多账号登录态管理，无签到）
 
 ---
 
@@ -86,7 +86,10 @@ AIGC:
 
 | 区域 | 能做什么 |
 | ---- | -------- |
-| **WorkBuddy / CodeBuddy / TraeWork / AutoClaw** | 各端账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端；WorkBuddy / CodeBuddy / AutoClaw 页顶部显示 Token 用量行（今日 / 7日 / 累计） |
+| **WorkBuddy** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限与成长中心入口；切换 / 删除 / 启动客户端；页顶部 Token 用量行（今日 / 7日 / 累计） |
+| **CodeBuddy** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端；页顶部 Token 用量行（今日 / 7日 / 累计） |
+| **TraeWork** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端 |
+| **AutoClaw** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端；页顶部 Token 用量行（今日 / 7日 / 累计） |
 | **CodeArts Agent** | 账号数与 Cookie 时限（登录态有效期）；多账号备份与一键切换（自动重启客户端生效），无需签到 |
 | **设置** | 随系统启动、字体大小、显示完整手机号、隐藏桌面机器人、各客户端启动开关、账号备份 / 恢复 |
 | **关于** | 版本与项目说明 |
