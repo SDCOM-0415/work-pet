@@ -3,17 +3,17 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'aeb2598b-a31e-4098-a8b8-3f56b494b258'
-  PropagateID: 'aeb2598b-a31e-4098-a8b8-3f56b494b258'
-  ReservedCode1: 'fdeea18d-fc21-4a2c-878e-d0417eaf589c'
-  ReservedCode2: 'fdeea18d-fc21-4a2c-878e-d0417eaf589c'
+  ProduceID: '62b7065b-2f67-4b51-afef-4dcb30f87825'
+  PropagateID: '62b7065b-2f67-4b51-afef-4dcb30f87825'
+  ReservedCode1: 'e05a5d3b-9cae-490a-9397-448019e1a309'
+  ReservedCode2: 'e05a5d3b-9cae-490a-9397-448019e1a309'
 ---
 
 # Work Pet 🤖
 
 **语言：** 简体中文
 
-> **Work Pet 是多 AI Agent（WorkBuddy、CodeBuddy、TraeWork、AutoClaw）签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然。账号与配置全部留在本机。**
+> **Work Pet 是多 AI Agent（WorkBuddy、CodeBuddy、TraeWork、AutoClaw、CodeArts Agent）签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然；WorkBuddy / CodeBuddy / AutoClaw 还能查看本机 Token 用量统计。账号与配置全部留在本机。**
 > 本机回环 CDP 注入 · 不改官方安装包 · 安装后无需 Node.js / Python 环境
 
 一个基于 **Chrome DevTools Protocol (CDP)** 的多 AI 编程客户端增强工具。
@@ -66,6 +66,7 @@ AIGC:
 - **多账号管理**：每个客户端的账号集中展示，一键切换（自动以调试模式重启客户端并登录新账号）。
 - **CodeArts Agent 多账号切换**：华为云 CodeArts Agent 无需签到（额度按官方政策自动发放），Work Pet 备份每个账号的登录态，一键切换免手动扫码登录。
 - **积分条**：按到期时间归类、段长与积分数量成正比，悬停查看到期日期与剩余天数；最近一次到期醒目高亮。
+- **Token 用量统计**：WorkBuddy / CodeBuddy / AutoClaw 三端扫描本机会话日志，展示今日 / 7日 / 30日 / 累计 Token 用量、会话数与请求数（悬停可见今日请求明细），用量一目了然。数据全部来自本机，不上传。CodeArts Agent 与 TraeWork 因数据存云端/加密库暂不支持。
 - **设备签到感知**：对按"设备"限额的签到自动轮换账号、按天公平分配，并在面板上一致呈现。
 - **单文件备份/恢复**：各端全部账号导出一个 `WorkPet-accounts-<时间戳>.json`，拷到其他电脑一键恢复。
 - **桌面宠物**：3D 机器人形象（眨眼/天线呼吸/浮动动画），可缩到最小或隐藏到托盘，右键快捷菜单。
@@ -86,7 +87,7 @@ AIGC:
 
 | 区域 | 能做什么 |
 | ---- | -------- |
-| **WorkBuddy / CodeBuddy / TraeWork / AutoClaw** | 各端账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端 |
+| **WorkBuddy / CodeBuddy / TraeWork / AutoClaw** | 各端账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端；WorkBuddy / CodeBuddy / AutoClaw 页顶部显示 Token 用量行（今日 / 7日 / 累计） |
 | **CodeArts Agent** | 账号数与 Cookie 时限（登录态有效期）；多账号备份与一键切换（自动重启客户端生效），无需签到 |
 | **设置** | 随系统启动、字体大小、显示完整手机号、隐藏桌面机器人、各客户端启动开关、账号备份 / 恢复 |
 | **关于** | 版本与项目说明 |
