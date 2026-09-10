@@ -179,9 +179,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: workpet-macos
-          path: |
-            desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+          # 只上传 dmg：dmg 里已经是完整的 WorkPet.app，再额外打一份裸 .app
+          # 等于把 240MB 的应用重复打包一次（实测 artifact 从 ~319MB 降到 ~79MB）。
+          path: desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
       # 发布：仅正式版 tag（如 v1.0.4）直接从构建目录上传；
