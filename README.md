@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '2003b71d-6131-4a72-bc6e-0b6857beaa9d'
-  PropagateID: '2003b71d-6131-4a72-bc6e-0b6857beaa9d'
-  ReservedCode1: '085093da-83e5-4aa1-9dd7-875409ae23c1'
-  ReservedCode2: '085093da-83e5-4aa1-9dd7-875409ae23c1'
+  ProduceID: '0fe9beec-0fe6-4916-9bc1-17d08696203c'
+  PropagateID: '0fe9beec-0fe6-4916-9bc1-17d08696203c'
+  ReservedCode1: '1fdc73cb-38cd-4841-a23b-c00496fe30f4'
+  ReservedCode2: '1fdc73cb-38cd-4841-a23b-c00496fe30f4'
 ---
 
 # Work Pet 🤖
@@ -64,7 +64,6 @@ AIGC:
 
 - **自动签到**：打开 Work Pet 即对全部账号静默签到（每日缓存幂等），客户端本体无需运行。
 - **多账号管理**：每个客户端的账号集中展示，一键切换（自动以调试模式重启客户端并登录新账号）。
-- **CodeArts Agent 多账号切换**：华为云 CodeArts Agent 无需签到（额度按官方政策自动发放），Work Pet 备份每个账号的登录态，一键切换免手动扫码登录。
 - **积分条**：按到期时间归类、段长与积分数量成正比，悬停查看到期日期与剩余天数；最近一次到期醒目高亮。
 - **Token 用量统计**：WorkBuddy / CodeBuddy / AutoClaw 三端扫描本机会话日志，展示今日 / 7日 / 30日 / 累计 Token 用量、会话数与请求数（悬停可见今日请求明细），用量一目了然。数据全部来自本机，不上传。CodeArts Agent 与 TraeWork 因数据存云端/加密库暂不支持。
 - **设备签到感知**：对按"设备"限额的签到自动轮换账号、按天公平分配，并在面板上一致呈现。
