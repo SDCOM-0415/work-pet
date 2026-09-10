@@ -46,12 +46,13 @@ function compareSemver(a, b) {
   return 0;
 }
 
-// ---------------- WorkBuddy / CodeBuddy Token 用量统计（扫描本机会话日志，数据不出本机） ----------------
-// 数据源：~/.workbuddy/projects 与 ~/.codebuddy/projects 下的 **/*.jsonl，
-// 每条记录的 providerData.rawUsage/usage（请求级真实 usage），两端字段一致
+// ---------------- WorkBuddy / CodeBuddy / AutoClaw Token 用量统计（扫描本机会话日志，数据不出本机） ----------------
+// 数据源：~/.workbuddy/projects、~/.codebuddy/projects 下的 **/*.jsonl（providerData.rawUsage/usage），
+// ~/.openclaw-autoclaw/agents 下的 */sessions/*.jsonl（message.usage，文件名即 sessionId），均为请求级真实 usage
 const CLIENT_USAGE_DIRS = {
   wb: path.join(os.homedir(), '.workbuddy', 'projects'),
   cb: path.join(os.homedir(), '.codebuddy', 'projects'),
+  ac: path.join(os.homedir(), '.openclaw-autoclaw', 'agents'),
 };
 const clientUsageCaches = {}; // kind -> { at, data }（各端独立 60s 缓存）
 
@@ -70,6 +71,21 @@ function wbLocalDay(d) {
 }
 
 function wbExtractUsage(rec) {
+  // OpenClaw/AutoClaw 格式：rec.message.usage = { input, output, cacheRead, cacheWrite, totalTokens, ... }
+  // 必须校验 input 为数字：cb 的 message.usage 是 snake_case（input_tokens），不能误入此分支
+  const oc = rec.message && rec.message.usage;
+  if (oc && typeof oc === 'object' && typeof oc.input === 'number') {
+    const input = Number(oc.input || 0);
+    const output = Number(oc.output || 0);
+    if (!input && !output) return null;
+    return {
+      input,
+      output,
+      cached: Number(oc.cacheRead || 0) + Number(oc.cacheWrite || 0),
+      total: Number(oc.totalTokens || input + output),
+    };
+  }
+  // WorkBuddy / CodeBuddy 格式：providerData.rawUsage/usage 或顶层 usage（OpenAI 风格字段）
   const pd = rec.providerData;
   const u = (pd && (pd.rawUsage || pd.usage)) || rec.usage;
   if (!u || typeof u !== 'object') return null;
@@ -96,6 +112,7 @@ function scanClientTokenUsage(kind) {
   for (const f of files) {
     let text;
     try { text = fs.readFileSync(f, 'utf8'); } catch (_) { continue; }
+    const fileSession = path.basename(f, path.extname(f)); // 兜底：AutoClaw 文件名即 sessionId
     for (const line of text.split('\n')) {
       const s = line.trim();
       if (s.length < 2) continue;
@@ -104,8 +121,11 @@ function scanClientTokenUsage(kind) {
       const u = wbExtractUsage(rec);
       if (!u) continue;
       requests++;
-      if (rec.sessionId) sessions.add(String(rec.sessionId));
-      const d = rec.timestamp ? new Date(rec.timestamp) : new Date();
+      const sid = rec.sessionId != null ? rec.sessionId : fileSession;
+      if (sid) sessions.add(String(sid));
+      // 优先 message.timestamp（AutoClaw 毫秒数字，避免其顶层 "MM/DD/YYYY" 字符串的月日歧义），回退顶层 timestamp
+      const ts = (rec.message && rec.message.timestamp) ?? rec.timestamp;
+      const d = ts ? new Date(ts) : new Date();
       const day = wbLocalDay(isNaN(d.getTime()) ? new Date() : d);
       const agg = (byDay[day] = byDay[day] || { input: 0, output: 0, cached: 0, total: 0, requests: 0 });
       agg.input += u.input; agg.output += u.output; agg.cached += u.cached; agg.total += u.total; agg.requests++;
@@ -2998,8 +3018,8 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
       }
       if (parts[4] === 'token-usage') {
-        // WorkBuddy / CodeBuddy Token 用量：扫描本机会话日志统计（60s 缓存）
-        if (pid !== 'wb' && pid !== 'cb') return sendJson(res, 404, { ok: false, error: 'token usage only available for wb/cb' });
+        // WorkBuddy / CodeBuddy / AutoClaw Token 用量：扫描本机会话日志统计（60s 缓存）
+        if (pid !== 'wb' && pid !== 'cb' && pid !== 'ac') return sendJson(res, 404, { ok: false, error: 'token usage only available for wb/cb/ac' });
         return sendJson(res, 200, { ok: true, ...clientUsageSummary(pid) });
       }
       return sendJson(res, 404, { ok: false, error: 'not found' });

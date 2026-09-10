@@ -8,6 +8,9 @@ import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
 import type { ClientAccount, ClientCredits, WbTokenUsage } from "@/types";
 import { fmtCredits, fmtTokens, clientTokenUsage, openExternal, clientAccounts, clientAccountsClaim, clientCredits, clientDelete, clientStatus, clientSwitch, type ClientKind } from "@/api";
 
+// 支持 Token 用量统计的客户端（本机会话日志扫描，daemon 60s 缓存）
+const TOKEN_USAGE_KINDS = new Set<ClientKind>(["wb", "cb", "ac"]);
+
 /// 签到徽标：兼容对象/字符串两种形态
 function checkinBadge(a: ClientAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
   const c = a.checkin;
@@ -172,9 +175,9 @@ export default function WorkBuddyTab({
     return () => window.clearInterval(t);
   }, [load]);
 
-  // Token 用量统计（WorkBuddy / CodeBuddy）：daemon 扫描本机会话日志（60s 缓存），失败静默不影响主流程
+  // Token 用量统计（WorkBuddy / CodeBuddy / AutoClaw）：daemon 扫描本机会话日志（60s 缓存），失败静默不影响主流程
   const loadUsage = useCallback(async () => {
-    if (kind !== "wb" && kind !== "cb") return;
+    if (!TOKEN_USAGE_KINDS.has(kind)) return;
     try {
       setUsage(await clientTokenUsage(kind));
     } catch {
@@ -192,7 +195,7 @@ export default function WorkBuddyTab({
 
   // 手动刷新（⚡）时立即更新用量
   useEffect(() => {
-    if (refreshTick > 0 && (kind === "wb" || kind === "cb")) void loadUsage();
+    if (refreshTick > 0 && TOKEN_USAGE_KINDS.has(kind)) void loadUsage();
   }, [refreshTick, loadUsage]);
 
   // 每账号积分懒加载（串行，避免瞬时请求过密）
@@ -362,8 +365,8 @@ export default function WorkBuddyTab({
         )}
       </div>
 
-      {/* Token 用量行（WorkBuddy / CodeBuddy；本机会话日志统计，不上传） */}
-      {(kind === "wb" || kind === "cb") && usage && (
+      {/* Token 用量行（WorkBuddy / CodeBuddy / AutoClaw；本机会话日志统计，不上传） */}
+      {TOKEN_USAGE_KINDS.has(kind) && usage && (
         <div
           className="flex items-center gap-3 rounded-lg bg-muted/40 px-3 py-1.5 text-[11px]"
           title={`今日 ${usage.today.requests} 次请求 · 输入 ${fmtTokens(usage.today.input)}（含缓存命中 ${fmtTokens(usage.today.cached)}）· 输出 ${fmtTokens(usage.today.output)}`}
