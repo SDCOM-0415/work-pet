@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '0fe9beec-0fe6-4916-9bc1-17d08696203c'
-  PropagateID: '0fe9beec-0fe6-4916-9bc1-17d08696203c'
-  ReservedCode1: '1fdc73cb-38cd-4841-a23b-c00496fe30f4'
-  ReservedCode2: '1fdc73cb-38cd-4841-a23b-c00496fe30f4'
+  ProduceID: '1088f5fc-1709-462a-bbdf-4286e5e23468'
+  PropagateID: '1088f5fc-1709-462a-bbdf-4286e5e23468'
+  ReservedCode1: '3a9fc9a0-0306-4115-909e-1d9188e02a88'
+  ReservedCode2: '3a9fc9a0-0306-4115-909e-1d9188e02a88'
 ---
 
 # Work Pet 🤖
@@ -80,7 +80,7 @@ AIGC:
 - ❌ 模型管理、记忆、免打扰、防休眠
 - ❌ 客户端内的注入式增强面板
 
-这些是同类项目（如 WorkDaddy）的能力，本程序不会实现。**请勿提交此类功能需求。**
+这些能力本程序不会实现。**请勿提交此类功能需求。**
 
 ## 面板
 
