@@ -2,7 +2,6 @@
   "name": "workpet-ui",
   "private": true,
   "version": "1.0.2",
-  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
