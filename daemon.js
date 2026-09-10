@@ -46,10 +46,14 @@ function compareSemver(a, b) {
   return 0;
 }
 
-// ---------------- WorkBuddy Token 用量统计（扫描本机会话日志，数据不出本机） ----------------
-// 数据源：~/.workbuddy/projects/**/*.jsonl 每条记录的 providerData.rawUsage/usage（请求级真实 usage）
-const WB_PROJECTS_DIR = path.join(os.homedir(), '.workbuddy', 'projects');
-let wbUsageCache = { at: 0, data: null };
+// ---------------- WorkBuddy / CodeBuddy Token 用量统计（扫描本机会话日志，数据不出本机） ----------------
+// 数据源：~/.workbuddy/projects 与 ~/.codebuddy/projects 下的 **/*.jsonl，
+// 每条记录的 providerData.rawUsage/usage（请求级真实 usage），两端字段一致
+const CLIENT_USAGE_DIRS = {
+  wb: path.join(os.homedir(), '.workbuddy', 'projects'),
+  cb: path.join(os.homedir(), '.codebuddy', 'projects'),
+};
+const clientUsageCaches = {}; // kind -> { at, data }（各端独立 60s 缓存）
 
 function wbListJsonl(dir, out) {
   let entries;
@@ -80,14 +84,15 @@ function wbExtractUsage(rec) {
   return { input, output, cached, total: Number(u.total_tokens || input + output) };
 }
 
-function wbScanTokenUsage() {
+function scanClientTokenUsage(kind) {
   const now = Date.now();
-  if (wbUsageCache.data && now - wbUsageCache.at < 60_000) return wbUsageCache.data;
+  const cache = clientUsageCaches[kind] || (clientUsageCaches[kind] = { at: 0, data: null });
+  if (cache.data && now - cache.at < 60_000) return cache.data;
   const byDay = Object.create(null);
   const sessions = new Set();
   let requests = 0;
   const files = [];
-  wbListJsonl(WB_PROJECTS_DIR, files);
+  wbListJsonl(CLIENT_USAGE_DIRS[kind] || '', files);
   for (const f of files) {
     let text;
     try { text = fs.readFileSync(f, 'utf8'); } catch (_) { continue; }
@@ -107,12 +112,12 @@ function wbScanTokenUsage() {
     }
   }
   const data = { at: now, byDay, requests, sessions: sessions.size };
-  wbUsageCache = { at: now, data };
+  clientUsageCaches[kind] = { at: now, data };
   return data;
 }
 
-function wbUsageSummary() {
-  const scan = wbScanTokenUsage();
+function clientUsageSummary(kind) {
+  const scan = scanClientTokenUsage(kind);
   const empty = () => ({ input: 0, output: 0, cached: 0, total: 0, requests: 0 });
   const sumRange = (fromDay, toDay) => {
     const s = empty();
@@ -2993,9 +2998,9 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
       }
       if (parts[4] === 'token-usage') {
-        // WorkBuddy Token 用量：扫描本机会话日志统计（仅 wb 提供；扫描有 60s 缓存）
-        if (pid !== 'wb') return sendJson(res, 404, { ok: false, error: 'token usage only available for wb' });
-        return sendJson(res, 200, { ok: true, ...wbUsageSummary() });
+        // WorkBuddy / CodeBuddy Token 用量：扫描本机会话日志统计（60s 缓存）
+        if (pid !== 'wb' && pid !== 'cb') return sendJson(res, 404, { ok: false, error: 'token usage only available for wb/cb' });
+        return sendJson(res, 200, { ok: true, ...clientUsageSummary(pid) });
       }
       return sendJson(res, 404, { ok: false, error: 'not found' });
     }

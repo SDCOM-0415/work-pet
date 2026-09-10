@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Loader2, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
 import type { ClientAccount, ClientCredits, WbTokenUsage } from "@/types";
-import { fmtCredits, fmtTokens, wbTokenUsage, clientAccounts, clientAccountsClaim, clientCredits, clientDelete, clientStatus, clientSwitch, type ClientKind } from "@/api";
+import { fmtCredits, fmtTokens, clientTokenUsage, openExternal, clientAccounts, clientAccountsClaim, clientCredits, clientDelete, clientStatus, clientSwitch, type ClientKind } from "@/api";
 
 /// 签到徽标：兼容对象/字符串两种形态
 function checkinBadge(a: ClientAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
@@ -171,11 +172,11 @@ export default function WorkBuddyTab({
     return () => window.clearInterval(t);
   }, [load]);
 
-  // Token 用量统计（仅 WorkBuddy）：daemon 扫描本机会话日志（60s 缓存），失败静默不影响主流程
+  // Token 用量统计（WorkBuddy / CodeBuddy）：daemon 扫描本机会话日志（60s 缓存），失败静默不影响主流程
   const loadUsage = useCallback(async () => {
-    if (kind !== "wb") return;
+    if (kind !== "wb" && kind !== "cb") return;
     try {
-      setUsage(await wbTokenUsage());
+      setUsage(await clientTokenUsage(kind));
     } catch {
       // 用量统计失败静默：下个周期自动重试
     }
@@ -191,7 +192,7 @@ export default function WorkBuddyTab({
 
   // 手动刷新（⚡）时立即更新用量
   useEffect(() => {
-    if (refreshTick > 0 && kind === "wb") void loadUsage();
+    if (refreshTick > 0 && (kind === "wb" || kind === "cb")) void loadUsage();
   }, [refreshTick, loadUsage]);
 
   // 每账号积分懒加载（串行，避免瞬时请求过密）
@@ -361,8 +362,8 @@ export default function WorkBuddyTab({
         )}
       </div>
 
-      {/* Token 用量行（仅 WorkBuddy；本机会话日志统计，不上传） */}
-      {kind === "wb" && usage && (
+      {/* Token 用量行（WorkBuddy / CodeBuddy；本机会话日志统计，不上传） */}
+      {(kind === "wb" || kind === "cb") && usage && (
         <div
           className="flex items-center gap-3 rounded-lg bg-muted/40 px-3 py-1.5 text-[11px]"
           title={`今日 ${usage.today.requests} 次请求 · 输入 ${fmtTokens(usage.today.input)}（含缓存命中 ${fmtTokens(usage.today.cached)}）· 输出 ${fmtTokens(usage.today.output)}`}
@@ -430,6 +431,12 @@ export default function WorkBuddyTab({
                     expire_sec: Math.round(s.expiresAt / 1000),
                   }))}
                   barColor="bg-sky-400"
+                  profileLabel={kind === "wb" ? "成长中心" : undefined}
+                  onOpenProfile={
+                    kind === "wb"
+                      ? () => void openExternal("https://www.workbuddy.cn/profile/growth-center").catch(() => {})
+                      : undefined
+                  }
                   switchArmed={false}
                   launchLabel={label}
                   switchBusy={busyUid === a.uid}

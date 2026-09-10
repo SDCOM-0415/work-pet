@@ -7,6 +7,7 @@ import type {
   Entitlement,
   Status,
   UpdateInfo,
+  WbTokenUsage,
 } from "./types";
 
 // 服务端高峰限流等临时错误标记（后端注入），前端据此自动重试
@@ -311,9 +312,9 @@ export function clientStatus(kind: ClientKind): Promise<ClientStatus> {
   }));
 }
 
-/// WorkBuddy Token 用量统计（daemon 扫描本机会话日志；仅 wb 支持）
-export function wbTokenUsage(): Promise<WbTokenUsage> {
-  return call<any>("GET", `/api/client/wb/token-usage`).then((v) => {
+/// WorkBuddy / CodeBuddy Token 用量统计（daemon 扫描本机会话日志；数据不出本机）
+export function clientTokenUsage(kind: ClientKind): Promise<WbTokenUsage> {
+  return call<any>("GET", `/api/client/${kind}/token-usage`).then((v) => {
     const bucket = (b: any) => ({
       input: Number(b?.input ?? 0),
       output: Number(b?.output ?? 0),
@@ -397,6 +398,11 @@ export function clientDelete(kind: ClientKind, uid: string): Promise<void> {
 
 export function clientBackup(kind: ClientKind): Promise<void> {
   return call<any>("GET", `/api/client/${kind}/accounts?checkinStatus=1`).then(() => undefined);
+}
+
+/// 用系统默认浏览器打开外部链接（Rust 端仅允许 https）
+export function openExternal(url: string): Promise<void> {
+  return invoke<void>("open_external", { url });
 }
 
 export function checkUpdate(): Promise<UpdateInfo> {

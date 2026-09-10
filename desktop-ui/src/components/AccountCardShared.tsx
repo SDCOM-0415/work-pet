@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeftRight, ChevronDown, Loader2, Trash2, Zap } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ExternalLink, Loader2, Trash2, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ExpiryBar, fmtMonthDay, nextExpiry } from "@/components/PackBar";
@@ -41,6 +41,9 @@ export interface SharedCardProps {
   /// 积分明细（积分条 + 下拉），同时用于最近过期计算
   packs: DetailItem[];
   barColor?: string; // TraeWork=绿 bg-success；WorkBuddy=天蓝 bg-sky-400
+  /// 外链按钮（如 WorkBuddy 成长中心）：有 onOpenProfile 才显示
+  profileLabel?: string;
+  onOpenProfile?: () => void;
   switchArmed?: boolean;
   switchBusy?: boolean;
   launchLabel?: string;
@@ -101,6 +104,17 @@ export default function SharedAccountCard(p: SharedCardProps) {
           </Badge>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {p.onOpenProfile && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-foreground/60 hover:text-foreground"
+              title={`打开${p.profileLabel ?? "主页"}（浏览器）`}
+              onClick={() => p.onOpenProfile?.()}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
