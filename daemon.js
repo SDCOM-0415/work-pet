@@ -1057,7 +1057,8 @@ const { extractCreditSegments, sortCreditSegments, mergeCreditSegments } = requi
 // ---------------- AutoClaw（智谱 AutoGLM 桌面端，独立账号体系） ----------------
 // 登录态 = %APPDATA%/autoclaw/auth.json（token/refreshToken 为 Electron safeStorage "enc:v10" 加密，
 //   密钥在 Local State 的 os_crypt.encrypted_key —— DPAPI 包裹的 AES-256-GCM key，与浏览器同构）。
-// 签到 = POST /autoclaw-proxy/proxy/autoclaw-task-complete { task_id: 'daily_signin' }（任务中心任务，每日 200 分）。
+// 签到 = POST /autoclaw-proxy/proxy/autoclaw-task-complete { task_id: 'daily_signin' }（任务中心任务，
+//   实测 daily_signin 的 reward_points 为 400，不写死数字，一律以服务端返回为准）。
 // 积分 = GET /agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw（total_points / expiring_points）。
 // 签名头 = X-Auth-Appid/X-Auth-TimeStamp/X-Auth-Sign（md5(appid&ts&appkey)），token 走 Authorization Bearer。
 // Cookie 时限 = JWT exp（access_token 是 JWT，24h）；refresh 走 /userapi/v1/refresh（refresh_token 轮换，回写 auth.json）。
@@ -2026,13 +2027,18 @@ async function acCdpClickSignin() {
 async function acCdpEvalOnce(jsExpr) {
   const ports = [9226, 9225, 9224, 9223, 9222, 9227, 9228];
   let lastErr = null;
+  // 只保留最后一个端口的错误会掩盖真实原因：AutoClaw 实际监听 9226，而列表末尾的 9228
+  // 通常压根没监听，于是 9226 上的真实失败（ws 连接失败 / 页面内 JS 报错）会被
+  // "port9228不可达" 覆盖掉，日志里看不到任何有效线索。这里同时记住首个错误。
+  let firstErr = null;
+  const note = (m) => { if (firstErr === null) firstErr = m; lastErr = m; };
   for (const port of ports) {
     let ws = null;
     try {
       const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) }).then(r => r.json()).catch(() => null);
-      if (!Array.isArray(list)) { lastErr = `port${port}不可达`; continue; }
+      if (!Array.isArray(list)) { note(`port${port}不可达`); continue; }
       const target = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl && /AutoClaw|autoclaw/i.test(t.title || ''));
-      if (!target) { lastErr = `port${port}无AutoClaw页面`; continue; }
+      if (!target) { note(`port${port}无AutoClaw页面`); continue; }
       ws = new WebSocket(target.webSocketDebuggerUrl);
       await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('ws连接失败')); });
       let id = 0; const pend = new Map();
@@ -2041,12 +2047,12 @@ async function acCdpEvalOnce(jsExpr) {
       const r = await send('Runtime.evaluate', { expression: jsExpr, returnByValue: true, awaitPromise: true, scriptTimeout: 8000 });
       return r.result && r.result.value;
     } catch (e) {
-      lastErr = e.message;
+      note(e.message);
     } finally {
       if (ws) { try { ws.close(); } catch (_) {} }
     }
   }
-  throw new Error('CDP 不可用: ' + lastErr);
+  throw new Error('CDP 不可用: ' + (firstErr === lastErr ? String(lastErr) : `${firstErr} … ${lastErr}`));
 }
 
 /**
@@ -3393,10 +3399,19 @@ const EXE_NAME = isMac
   ? path.basename(CFG.exe || 'TRAE SOLO CN')
   : path.basename(CFG.exe || 'TRAE SOLO CN.exe');
 
+// pgrep -f 走 ERE 正则。注意这里绝不能写成 '(\s|$)'：JS 单引号字符串里 \s 不是合法转义，
+// 会被原样吞成 's'，模式变成 "(s|$)" —— 而真实命令行是
+// "/Applications/TRAE SOLO CN.app/Contents/MacOS/Electron"，其后紧跟的是 '.' 而非 's'，
+// 于是 pgrep 永远无匹配 → isProcessRunning() 在 macOS 上恒为 false：
+//   · ensureTraeWorkWithCdp() 刚 spawn 完就判定"进程已退出"而 break，不再等 CDP 端口就绪
+//   · 两轮拉起都秒退，最终报"等待 TraeWork CDP 端口超时"，宿主 IPC 签到永远走不通。
+// 这里改成匹配 .app/Contents/MacOS/ 路径段，规避转义坑且不会误伤其它 Electron 应用。
+const TRAE_PROCESS_ERE = '(/TRAE SOLO CN|/Trae CN|/TraeWork|/Trae)\\.app/Contents/MacOS/';
+
 function isProcessRunning() {
   if (isMac) {
     try {
-      const out = execFileSync('pgrep', ['-f', '(/TRAE SOLO CN|/Trae CN|/TraeWork|/Trae)(\s|$)'], { encoding: 'utf8' });
+      const out = execFileSync('pgrep', ['-f', TRAE_PROCESS_ERE], { encoding: 'utf8' });
       return Boolean(out.trim());
     } catch (_) { return false; }
   }
