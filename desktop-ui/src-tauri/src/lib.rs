@@ -8,7 +8,9 @@ mod api;
 use std::os::windows::process::CommandExt;
 
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(target_os = "windows")]
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Window};
 
@@ -79,6 +81,7 @@ fn resolve_client_exe(name: &str) -> Option<PathBuf> {
 /// 已开调试端口 → 直接返回；正在运行但没开端口 → 返回 CB_RUNNING_NO_CDP，
 /// 由前端二次确认后以 force=true 优雅关闭再重启（绝不静默强杀，避免 EPIPE 弹窗）。
 #[tauri::command]
+#[allow(unused_variables)]
 async fn launch_codebuddy(force: Option<bool>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -301,6 +304,7 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<String, String> {
 /// CodeArts 无需 CDP 注入：切换账号由 daemon 直接写 vscdb 后重启客户端，
 /// 因此已运行且未要求 force 时直接返回，不折腾运行中的窗口。
 #[tauri::command]
+#[allow(unused_variables)]
 async fn launch_codearts(force: Option<bool>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
