@@ -10,6 +10,9 @@ jobs:
   build-windows:
     name: Build (Windows x64)
     runs-on: windows-latest
+    permissions:
+      # tag push 时需要写权限创建 Release（v1.0.2 验证过的模式：单 job 内直接发布）
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -49,49 +52,56 @@ jobs:
             desktop-ui/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
-
-  release:
-    name: Publish Release
-    needs: [build-windows]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-          path: dist
-
-      - name: Create release and upload assets
+      # 发布：tag push 时直接从构建目录上传（不经过 artifact 中转；
+      # beta/rc/alpha 后缀发布为 prerelease，正式版 --latest）。
+      # 诊断信息写入 job summary（匿名浏览器可见），便于发布失败时定位。
+      - name: Publish release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          ls -lhR dist
+          set -uo pipefail
+          SUM="$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Release publish diagnostics"
+            echo "- tag: \`${TAG}\`"
+            echo "- gh: $(gh --version | head -1)"
+          } >> "$SUM"
 
-          ASSETS=$(find dist -type f \( -name "*-setup.exe" -o -name "*.dmg" \))
+          ASSETS=$(find desktop-ui/src-tauri/target/release/bundle/nsis -type f -name "*-setup.exe" 2>/dev/null)
+          {
+            echo "- installer files:"
+            echo '  ```'
+            echo "$ASSETS"
+            echo '  ```'
+          } >> "$SUM"
           if [ -z "$ASSETS" ]; then
-            echo "ERROR: no release assets found" >&2
+            echo "ERROR: no *-setup.exe found under bundle/nsis" >> "$SUM"
             exit 1
           fi
-          echo "Assets to upload:"
-          echo "$ASSETS"
 
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" $ASSETS --clobber
-          elif echo "$TAG" | grep -Eq -- '-(beta|rc|alpha)'; then
-            # 测试版：tag 带 -beta/-rc/-alpha 后缀 → 预发布（不占用 latest，不影响正式版更新提示）
-            gh release create "$TAG" $ASSETS \
-              --title "WorkPet ${TAG#v} (Testing)" \
-              --generate-notes \
-              --prerelease
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "- release already exists -> upload assets" >> "$SUM"
+            gh release upload "$TAG" $ASSETS --clobber --repo "$REPO" 2>&1 | tee -a "$SUM"
+            rc=${PIPESTATUS[0]}
           else
-            gh release create "$TAG" $ASSETS \
-              --title "WorkPet ${TAG#v}" \
-              --generate-notes \
-              --latest
+            if echo "$TAG" | grep -Eq -- '-(beta|rc|alpha)'; then
+              TITLE="WorkPet ${TAG#v} (Testing)"
+              EXTRA=(--prerelease)
+            else
+              TITLE="WorkPet ${TAG#v}"
+              EXTRA=(--latest)
+            fi
+            echo "- creating new release: $TITLE (prerelease: $([ ${#EXTRA[@]} -gt 0 ] && echo yes || echo no))" >> "$SUM"
+            gh release create "$TAG" $ASSETS --repo "$REPO" --title "$TITLE" --generate-notes "${EXTRA[@]}" 2>&1 | tee -a "$SUM"
+            rc=${PIPESTATUS[0]}
           fi
+
+          if [ "$rc" -ne 0 ]; then
+            echo "### gh release exited with $rc" >> "$SUM"
+            exit "$rc"
+          fi
+          echo "- published OK" >> "$SUM"
