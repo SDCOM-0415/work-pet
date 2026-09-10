@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '62b7065b-2f67-4b51-afef-4dcb30f87825'
-  PropagateID: '62b7065b-2f67-4b51-afef-4dcb30f87825'
-  ReservedCode1: 'e05a5d3b-9cae-490a-9397-448019e1a309'
-  ReservedCode2: 'e05a5d3b-9cae-490a-9397-448019e1a309'
+  ProduceID: '2003b71d-6131-4a72-bc6e-0b6857beaa9d'
+  PropagateID: '2003b71d-6131-4a72-bc6e-0b6857beaa9d'
+  ReservedCode1: '085093da-83e5-4aa1-9dd7-875409ae23c1'
+  ReservedCode2: '085093da-83e5-4aa1-9dd7-875409ae23c1'
 ---
 
 # Work Pet 🤖
@@ -193,17 +193,10 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
   </a>
 </p>
 
-## 🙏 致谢
-
-- [WorkDaddy](https://github.com/babygoton/WorkDaddy) —— WorkBuddy/CodeBuddy 端签到与积分解析逻辑的移植来源（AGPL-3.0）。
-
----
-
 ## 许可与声明
 
 本项目采用 **[GNU Affero General Public License v3.0](LICENSE)** 开源（`SPDX-License-Identifier: AGPL-3.0-or-later`）。
 
-- WorkBuddy / CodeBuddy 端的签到、积分解析与注入架构移植自 [WorkDaddy](https://github.com/babygoton/WorkDaddy)（AGPL-3.0），因此本项目同样以 AGPL-3.0 发布：任何修改（包括仅作为网络服务运行）都必须开源。
 - 本项目仅面向本机运行的 AI 桌面客户端做体验增强，**与各客户端官方无隶属关系**；相关名称与商标归其权利人所有，本项目未获得官方授权或认可。
 
 ---
