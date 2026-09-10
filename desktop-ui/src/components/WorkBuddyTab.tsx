@@ -4,8 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import SharedAccountCard, { toExpireSec } from "@/components/AccountCardShared";
-import type { ClientAccount, ClientCredits } from "@/types";
-import { fmtCredits, clientAccounts, clientAccountsClaim, clientCredits, clientDelete, clientStatus, clientSwitch, type ClientKind } from "@/api";
+import type { ClientAccount, ClientCredits, WbTokenUsage } from "@/types";
+import { fmtCredits, fmtTokens, wbTokenUsage, clientAccounts, clientAccountsClaim, clientCredits, clientDelete, clientStatus, clientSwitch, type ClientKind } from "@/api";
 
 /// 签到徽标：兼容对象/字符串两种形态
 function checkinBadge(a: ClientAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
@@ -50,6 +50,8 @@ export default function WorkBuddyTab({
   const [armed, setArmed] = useState<Record<string, boolean>>({});
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
   const [restartArmed, setRestartArmed] = useState(false);
+  // Token 用量统计（仅 WorkBuddy 有数据）
+  const [usage, setUsage] = useState<WbTokenUsage | null>(null);
   const accountsRef = useRef<ClientAccount[] | null>(null);
   // 积分缓存镜像（ref 便于轮询时判断哪些 uid 还没加载/失败需重试）
   const creditsRef = useRef<Record<string, ClientCredits | "loading" | "error">>({});
@@ -168,6 +170,29 @@ export default function WorkBuddyTab({
     const t = window.setInterval(() => void load(false), 120_000);
     return () => window.clearInterval(t);
   }, [load]);
+
+  // Token 用量统计（仅 WorkBuddy）：daemon 扫描本机会话日志（60s 缓存），失败静默不影响主流程
+  const loadUsage = useCallback(async () => {
+    if (kind !== "wb") return;
+    try {
+      setUsage(await wbTokenUsage());
+    } catch {
+      // 用量统计失败静默：下个周期自动重试
+    }
+  }, [kind]);
+
+  // 本 Tab 可见时拉取并每 60s 刷新（与 daemon 缓存周期对齐）；不可见时不请求
+  useEffect(() => {
+    if (!active) return;
+    void loadUsage();
+    const t = window.setInterval(() => void loadUsage(), 60_000);
+    return () => window.clearInterval(t);
+  }, [active, loadUsage]);
+
+  // 手动刷新（⚡）时立即更新用量
+  useEffect(() => {
+    if (refreshTick > 0 && kind === "wb") void loadUsage();
+  }, [refreshTick, loadUsage]);
 
   // 每账号积分懒加载（串行，避免瞬时请求过密）
   const accountsKey = accounts?.map((a) => a.uid).join(",") ?? "";
@@ -335,6 +360,27 @@ export default function WorkBuddyTab({
           </Button>
         )}
       </div>
+
+      {/* Token 用量行（仅 WorkBuddy；本机会话日志统计，不上传） */}
+      {kind === "wb" && usage && (
+        <div
+          className="flex items-center gap-3 rounded-lg bg-muted/40 px-3 py-1.5 text-[11px]"
+          title={`今日 ${usage.today.requests} 次请求 · 输入 ${fmtTokens(usage.today.input)}（含缓存命中 ${fmtTokens(usage.today.cached)}）· 输出 ${fmtTokens(usage.today.output)}`}
+        >
+          <span className="text-muted-foreground">
+            Token 今日 <span className="font-semibold text-foreground">{fmtTokens(usage.today.total)}</span>
+          </span>
+          <span className="h-3 w-px bg-border" />
+          <span className="text-muted-foreground">
+            7日 <span className="font-semibold text-foreground">{fmtTokens(usage.days7.total)}</span>
+          </span>
+          <span className="h-3 w-px bg-border" />
+          <span className="text-muted-foreground">
+            累计 <span className="font-semibold text-foreground">{fmtTokens(usage.all.total)}</span>
+            <span className="text-muted-foreground/70"> · {usage.allSessions} 会话</span>
+          </span>
+        </div>
+      )}
 
       {accounts.length === 0 ? (
         <div className="flex flex-col items-start gap-2 px-1">

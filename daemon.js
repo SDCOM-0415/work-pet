@@ -25,19 +25,118 @@ const { spawn, execFileSync } = require('child_process');
 const isMac = process.platform === 'darwin';
 
 const APP_BRAND = 'TraeWork';
-const DAEMON_VERSION = '1.0.3';
+const DAEMON_VERSION = '1.0.3-beta.3';
 const APP_VERSION = DAEMON_VERSION;
 const HOST = '127.0.0.1';
 
-// 语义化版本比较：a>b 返回正数，a<b 返回负数，相等返回 0（支持 v 前缀，忽略 -beta 等后缀）
+// 语义化版本比较：a>b 返回正数，a<b 返回负数，相等返回 0（支持 v 前缀；
+// 预发布后缀按 semver 规则处理：同为 1.0.3 时 1.0.3 > 1.0.3-beta.3，正式版发布后测试版能收到更新提示）
 function compareSemver(a, b) {
-  const pa = String(a).trim().replace(/^v/i, '').split('-')[0].split('.').map(n => parseInt(n, 10) || 0);
-  const pb = String(b).trim().replace(/^v/i, '').split('-')[0].split('.').map(n => parseInt(n, 10) || 0);
+  const norm = (s) => {
+    const m = String(s).trim().replace(/^v/i, '').split('-');
+    return { core: (m[0] || '').split('.').map(n => parseInt(n, 10) || 0), pre: m.slice(1).join('-') || null };
+  };
+  const A = norm(a), B = norm(b);
   for (let i = 0; i < 3; i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
+    const d = (A.core[i] || 0) - (B.core[i] || 0);
     if (d) return d;
   }
+  if (A.pre && !B.pre) return -1;
+  if (!A.pre && B.pre) return 1;
   return 0;
+}
+
+// ---------------- WorkBuddy Token 用量统计（扫描本机会话日志，数据不出本机） ----------------
+// 数据源：~/.workbuddy/projects/**/*.jsonl 每条记录的 providerData.rawUsage/usage（请求级真实 usage）
+const WB_PROJECTS_DIR = path.join(os.homedir(), '.workbuddy', 'projects');
+let wbUsageCache = { at: 0, data: null };
+
+function wbListJsonl(dir, out) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) wbListJsonl(p, out);
+    else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(p);
+  }
+}
+
+function wbLocalDay(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function wbExtractUsage(rec) {
+  const pd = rec.providerData;
+  const u = (pd && (pd.rawUsage || pd.usage)) || rec.usage;
+  if (!u || typeof u !== 'object') return null;
+  const input = Number(u.prompt_tokens || 0);
+  const output = Number(u.completion_tokens || 0);
+  if (!input && !output) return null;
+  const cached = Number(
+    u.prompt_cache_hit_tokens ??
+    (u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) ??
+    u.cache_read_input_tokens ?? 0
+  );
+  return { input, output, cached, total: Number(u.total_tokens || input + output) };
+}
+
+function wbScanTokenUsage() {
+  const now = Date.now();
+  if (wbUsageCache.data && now - wbUsageCache.at < 60_000) return wbUsageCache.data;
+  const byDay = Object.create(null);
+  const sessions = new Set();
+  let requests = 0;
+  const files = [];
+  wbListJsonl(WB_PROJECTS_DIR, files);
+  for (const f of files) {
+    let text;
+    try { text = fs.readFileSync(f, 'utf8'); } catch (_) { continue; }
+    for (const line of text.split('\n')) {
+      const s = line.trim();
+      if (s.length < 2) continue;
+      let rec;
+      try { rec = JSON.parse(s); } catch (_) { continue; }
+      const u = wbExtractUsage(rec);
+      if (!u) continue;
+      requests++;
+      if (rec.sessionId) sessions.add(String(rec.sessionId));
+      const d = rec.timestamp ? new Date(rec.timestamp) : new Date();
+      const day = wbLocalDay(isNaN(d.getTime()) ? new Date() : d);
+      const agg = (byDay[day] = byDay[day] || { input: 0, output: 0, cached: 0, total: 0, requests: 0 });
+      agg.input += u.input; agg.output += u.output; agg.cached += u.cached; agg.total += u.total; agg.requests++;
+    }
+  }
+  const data = { at: now, byDay, requests, sessions: sessions.size };
+  wbUsageCache = { at: now, data };
+  return data;
+}
+
+function wbUsageSummary() {
+  const scan = wbScanTokenUsage();
+  const empty = () => ({ input: 0, output: 0, cached: 0, total: 0, requests: 0 });
+  const sumRange = (fromDay, toDay) => {
+    const s = empty();
+    for (const day of Object.keys(scan.byDay)) {
+      if (day >= fromDay && day <= toDay) {
+        const a = scan.byDay[day];
+        s.input += a.input; s.output += a.output; s.cached += a.cached; s.total += a.total; s.requests += a.requests;
+      }
+    }
+    return s;
+  };
+  const today = wbLocalDay(new Date());
+  const daysAgo = (n) => wbLocalDay(new Date(Date.now() - n * 86_400_000));
+  const byDay = Object.keys(scan.byDay).sort().slice(-30).map((day) => ({ day, ...scan.byDay[day] }));
+  return {
+    today: sumRange(today, today),
+    days7: sumRange(daysAgo(6), today),
+    days30: sumRange(daysAgo(29), today),
+    all: sumRange('0000-00-00', '9999-99-99'),
+    allSessions: scan.sessions,
+    allRequests: scan.requests,
+    byDay,
+    scannedAt: scan.at,
+  };
 }
 const CDP_PORT = 9222;
 const UI_PORT = parseInt(process.env.TRAEWORK_UI_PORT || '47921', 10);
@@ -2892,6 +2991,11 @@ const server = http.createServer(async (req, res) => {
         }
         const list = clientListAccounts(pid);
         return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
+      }
+      if (parts[4] === 'token-usage') {
+        // WorkBuddy Token 用量：扫描本机会话日志统计（仅 wb 提供；扫描有 60s 缓存）
+        if (pid !== 'wb') return sendJson(res, 404, { ok: false, error: 'token usage only available for wb' });
+        return sendJson(res, 200, { ok: true, ...wbUsageSummary() });
       }
       return sendJson(res, 404, { ok: false, error: 'not found' });
     }

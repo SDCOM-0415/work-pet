@@ -78,6 +78,26 @@ export interface ClientStatus {
   cdp?: { connected?: boolean };
 }
 
+/// WorkBuddy Token 用量（本机会话日志统计，daemon 扫描 ~/.workbuddy/projects）
+export interface TokenUsageBucket {
+  input: number;
+  output: number;
+  cached: number;
+  total: number;
+  requests: number;
+}
+
+export interface WbTokenUsage {
+  today: TokenUsageBucket;
+  days7: TokenUsageBucket;
+  days30: TokenUsageBucket;
+  all: TokenUsageBucket;
+  allSessions: number;
+  allRequests: number;
+  byDay: (TokenUsageBucket & { day: string })[];
+  scannedAt?: number;
+}
+
 export interface UpdateInfo {
   hasUpdate: boolean;
   currentVersion: string;

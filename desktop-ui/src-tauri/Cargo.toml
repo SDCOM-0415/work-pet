@@ -1,6 +1,6 @@
 [package]
 name = "workpet"
-version = "1.0.3"
+version = "1.0.3-beta.3"
 edition = "2021"
 description = "Work Pet · 多 AI Agent 签到与账号管理宠物"
 license = "MIT"

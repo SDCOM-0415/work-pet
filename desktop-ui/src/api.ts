@@ -311,6 +311,40 @@ export function clientStatus(kind: ClientKind): Promise<ClientStatus> {
   }));
 }
 
+/// WorkBuddy Token 用量统计（daemon 扫描本机会话日志；仅 wb 支持）
+export function wbTokenUsage(): Promise<WbTokenUsage> {
+  return call<any>("GET", `/api/client/wb/token-usage`).then((v) => {
+    const bucket = (b: any) => ({
+      input: Number(b?.input ?? 0),
+      output: Number(b?.output ?? 0),
+      cached: Number(b?.cached ?? 0),
+      total: Number(b?.total ?? 0),
+      requests: Number(b?.requests ?? 0),
+    });
+    return {
+      today: bucket(v?.today),
+      days7: bucket(v?.days7),
+      days30: bucket(v?.days30),
+      all: bucket(v?.all),
+      allSessions: Number(v?.allSessions ?? 0),
+      allRequests: Number(v?.allRequests ?? 0),
+      byDay: Array.isArray(v?.byDay)
+        ? v.byDay.map((d: any) => ({ day: String(d.day ?? ""), ...bucket(d) }))
+        : [],
+      scannedAt: v?.scannedAt ?? undefined,
+    };
+  });
+}
+
+/// token 数紧凑显示：1234 → 1.2k，2345678 → 2.3M，不足 1000 原样
+export function fmtTokens(n: number | undefined | null): string {
+  const v = Number(n ?? 0);
+  if (v >= 1e8) return `${(v / 1e8).toFixed(2)}亿`;
+  if (v >= 1e4) return `${(v / 1e4).toFixed(1)}万`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(Math.trunc(v));
+}
+
 export function clientAccounts(kind: ClientKind): Promise<{
   currentUid: string | null;
   accounts: ClientAccount[];
