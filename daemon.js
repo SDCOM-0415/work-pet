@@ -1416,15 +1416,49 @@ function acLaunchBinary() {
         .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
     if (!exe) throw new Error('未找到 AutoClaw 可执行文件');
     const args = ['--remote-debugging-port=' + port];
-    // macOS：直接 spawn .app 内真实可执行文件（与 Trae 同款），参数可稳定传给 Electron 主进程；
-    // 走 'open -n' 会激活窗口闪烁。Windows 已用隐藏窗口拉起。
-    const child = isMac
-      ? spawn(exe, args, { stdio: 'ignore', detached: true })
-      : spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
-    child.unref();
+    if (isMac) {
+      // 拉起前先杀旧实例：用户已开 / 上次拉起的实例都会带 single-instance-lock，
+      // 不杀干净，新进程会立刻退出 → CDP 端口永远不开 → 反复拉起。
+      // 最多两轮，每轮都重新杀 + 等退出 + spawn
+      return acLaunchMacWithRetry(exe, args, port, 2);
+    }
+    spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     log(`[client:ac] 已拉起 AutoClaw (--remote-debugging-port=${port})`);
-    return 'launched';
+    return Promise.resolve('launched');
   });
+}
+
+/** macOS 上带「杀旧实例 + 等退出 + spawn + 端口就绪检测」重试逻辑的拉起 */
+async function acLaunchMacWithRetry(exe, args, port, maxAttempts) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    killAutoClaw();
+    const gone = await waitProcessGone(exe, 5000);
+    if (!gone) log(`[client:ac] 旧实例未在 5s 内退出（第 ${attempt} 次）`);
+    spawn(exe, args, { stdio: 'ignore', detached: true }).unref();
+    log(`[client:ac] 已拉起 AutoClaw (--remote-debugging-port=${port}) 第 ${attempt} 次`);
+    // 轮询端口就绪（最坏 15s）
+    const dl = Date.now() + 15000;
+    while (Date.now() < dl) {
+      if (await isAcCdpUp(port)) return 'launched';
+      await sleep(400);
+    }
+    log(`[client:ac] 第 ${attempt} 次拉起后 CDP 端口未就绪`);
+  }
+  throw new Error('AutoClaw CDP 端口在 2 次拉起后仍未就绪（单实例锁可能未释放）');
+}
+
+/** 等指定进程完全退出（macOS 强杀后旧 lock 文件可能残留） */
+async function waitProcessGone(exe, timeoutMs) {
+  const name = path.basename(exe);
+  const dl = Date.now() + timeoutMs;
+  while (Date.now() < dl) {
+    try {
+      const out = execFileSync('pgrep', ['-x', name], { encoding: 'utf8' });
+      if (!out.trim()) return true;
+    } catch (_) { return true; } // pgrep 找不到进程 = 退出码 1
+    await sleep(300);
+  }
+  return false;
 }
 
 /**
@@ -1603,26 +1637,17 @@ async function acDailyCheckin(accessToken) {
   if (isMac) {
     // 记录是否由本进程临时拉起 AutoClaw：仅「临时拉起」场景签到后自动关闭，
     // 若复用用户已运行的实例则不关闭，避免打扰用户正在使用的客户端。
-    let autoLaunched = false;
     try {
       const how = await acLaunchBinary(); // 'reuse' 复用现有实例，'launched' 本次临时拉起
-      autoLaunched = how === 'launched';
-      let up = false;
-      const dl = Date.now() + 15000;
-      while (Date.now() < dl) {
-        if (await isAcCdpUp(CLIENT_PROFILES.ac.cdpPort)) { up = true; break; }
-        await sleep(400);
-      }
-      if (!up) throw new Error('AutoClaw CDP 未就绪');
+      // acLaunchBinary 内部已确保 9226 端口就绪
       const r = await acCdpSignin();
-      // 签到完成 → 自动关闭 AutoClaw（与 Trae 一致：签到时临时拉起，签完即退）
-      if (autoLaunched) {
+      if (how === 'launched') {
         try { killAutoClaw(); log('[client:ac] CDP 签到完成，已自动关闭临时拉起的 AutoClaw'); } catch (_) {}
       } else {
         log('[client:ac] CDP 签到完成（复用已运行实例，保持 AutoClaw 不关闭）');
       }
       return { ok: true, ...r, code: 0 };
-    } catch (_) { /* 未运行调试模式或 CDP 失败 → 回退 API 方式 */ }
+    } catch (e) { log('[client:ac] CDP 签到失败: ' + e.message + ' → 回退 API 方式'); }
   }
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -2870,6 +2895,10 @@ async function ensureTraeWorkWithCdp() {
   }
   // 最多两轮拉起：进程中途退出（单实例锁残留）时自动重试一次
   for (let attempt = 1; attempt <= 2; attempt++) {
+    // 每次拉起前再次确认旧实例已退出（包括上一轮拉起的失败进程）
+    killTraeWork();
+    for (let i = 0; i < 10 && isProcessRunning(); i++) await sleep(1000);
+    await sleep(800);
     log(`[proc] 启动: ${CFG.exe} --remote-debugging-port=${CDP_PORT} (第 ${attempt} 次)`);
     if (isMac) {
       // 直接启动 .app 内真实可执行文件，参数可稳定传给 Electron 主进程。
