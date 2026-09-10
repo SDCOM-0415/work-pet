@@ -291,6 +291,20 @@ fn expected_daemon_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// 本安装包内 daemon.js 的脚本指纹（字节数 + 整秒 mtime）。
+/// 格式必须与 daemon 侧 SELF_FINGERPRINT 完全一致，否则会一直误判为「不匹配」而反复重启。
+fn local_daemon_fingerprint() -> Option<String> {
+    let p = find_daemon_js()?;
+    let md = std::fs::metadata(&p).ok()?;
+    let secs = md
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("{}-{}", md.len(), secs))
+}
+
 /// 探测 47921 上的 daemon 是否为本包同版本（旧版本安装残留会返回不匹配）。
 pub fn daemon_version_matches() -> bool {
     let mut cb = ureq::Agent::config_builder();
@@ -309,10 +323,25 @@ pub fn daemon_version_matches() -> bool {
                 .read_to_string()
                 .unwrap_or_default();
             let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-            v.get("version")
+            let version_ok = v
+                .get("version")
                 .and_then(|x| x.as_str())
                 .map(|ver| ver.trim_start_matches('v') == expected_daemon_version())
-                .unwrap_or(false)
+                .unwrap_or(false);
+            if !version_ok {
+                return false;
+            }
+            // 版本号一致还不够：同版本号重新构建（本地修 bug 重打包、版本号没 bump）时，
+            // 版本比对会通过，于是旧常驻进程被判定成「本包的」而一直被复用，前端始终
+            // 连到旧逻辑。典型症状：安装包内置 Node 已升到 24，进程里却还是 Node 20，
+            // CDP 签到全部失效。这里再比对 daemon.js 脚本指纹；旧 daemon 不上报该字段
+            // → 视为不匹配，交由 ensure_daemon 停机重启。
+            let remote_fp = v.get("fingerprint").and_then(|x| x.as_str()).unwrap_or("");
+            match local_daemon_fingerprint() {
+                Some(local) => !remote_fp.is_empty() && remote_fp == local,
+                // 本地找不到 daemon.js（异常布局）时不据此判不匹配，避免陷入反复重启
+                None => true,
+            }
         }
         Err(_) => false,
     }

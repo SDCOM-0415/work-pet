@@ -33,6 +33,24 @@ const DAEMON_VERSION = '1.0.3';
 const APP_VERSION = DAEMON_VERSION;
 const HOST = '127.0.0.1';
 
+// 自身脚本指纹：进程启动时读一次并缓存，随 /api/health 上报，供桌面端判断
+// 「47921 端口上那个常驻进程，是不是本安装包里的这份 daemon.js」。
+//
+// 为什么需要它：桌面端原本只比对版本号（DAEMON_VERSION vs app 版本），但同一版本号
+// 重新构建（本地修 bug 重打包、版本号没 bump）时版本号是一致的，于是旧常驻进程会被
+// 判定为「本包的」而一直被复用 —— 表现为换了 node 和 daemon.js，跑的还是旧逻辑
+// （例如内置 Node 已升 24，进程里却仍是 Node 20，CDP 全部失效）。
+//
+// 必须「启动时」读取并缓存：进程跑起来之后安装包可能已把 daemon.js 覆盖，
+// 那时再 statSync 拿到的是新文件，无法反映本进程实际加载的版本。
+const SELF_FINGERPRINT = (() => {
+  try {
+    const st = fs.statSync(__filename);
+    // 只用「字节数 + 整秒 mtime」，避免浮点毫秒在 JS/Rust 两侧的取整差异
+    return `${st.size}-${Math.floor(st.mtimeMs / 1000)}`;
+  } catch (_) { return ''; }
+})();
+
 // 语义化版本比较：a>b 返回正数，a<b 返回负数，相等返回 0（支持 v 前缀；
 // 预发布后缀按 semver 规则处理：同为 1.0.3 时 1.0.3 > 1.0.3-beta.3，正式版发布后测试版能收到更新提示）
 function compareSemver(a, b) {
@@ -2994,7 +3012,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/api/health') {
       const auth = getAuth();
-      return sendJson(res, 200, { ok: true, app: APP_BRAND, version: DAEMON_VERSION, ts: Date.now(), authed: !auth.error });
+      return sendJson(res, 200, {
+        ok: true, app: APP_BRAND, version: DAEMON_VERSION, ts: Date.now(), authed: !auth.error,
+        // 脚本指纹 + 运行时 node 版本：桌面端据此识别「同版本号重新构建」导致的旧进程残留
+        fingerprint: SELF_FINGERPRINT, node: process.version,
+      });
     }
     if (req.method === 'GET' && url.pathname === '/api/checkin/status') {
       const r = await fetchStatus();
