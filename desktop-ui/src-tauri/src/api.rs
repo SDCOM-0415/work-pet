@@ -50,7 +50,8 @@ fn pet_token() -> Option<String> {
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-// CREATE_NO_WINDOW：后台拉起 node（控制台应用）时不弹出黑窗口
+/// CREATE_NO_WINDOW：后台拉起 node（控制台应用）时不弹出黑窗口
+#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub type ApiResult = Result<Value, String>;
