@@ -15,7 +15,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+：daemon 的 CodeArts Agent 账号切换依赖内置 node:sqlite（读写 state.vscdb）
+          node-version: 22
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -220,6 +221,12 @@ jobs:
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" $ASSETS --clobber
+          elif echo "$TAG" | grep -Eq -- '-(beta|rc|alpha)'; then
+            # 测试版：tag 带 -beta/-rc/-alpha 后缀 → 预发布（不占用 latest，不影响正式版更新提示）
+            gh release create "$TAG" $ASSETS \
+              --title "WorkPet ${TAG#v} (Testing)" \
+              --generate-notes \
+              --prerelease
           else
             gh release create "$TAG" $ASSETS \
               --title "WorkPet ${TAG#v}" \
