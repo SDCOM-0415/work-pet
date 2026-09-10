@@ -25,7 +25,7 @@ const { spawn, execFileSync } = require('child_process');
 const isMac = process.platform === 'darwin';
 
 const APP_BRAND = 'TraeWork';
-const DAEMON_VERSION = '1.0.3-beta.3';
+const DAEMON_VERSION = '1.0.3';
 const APP_VERSION = DAEMON_VERSION;
 const HOST = '127.0.0.1';
 
