@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '1088f5fc-1709-462a-bbdf-4286e5e23468'
-  PropagateID: '1088f5fc-1709-462a-bbdf-4286e5e23468'
-  ReservedCode1: '3a9fc9a0-0306-4115-909e-1d9188e02a88'
-  ReservedCode2: '3a9fc9a0-0306-4115-909e-1d9188e02a88'
+  ProduceID: '457a3d15-2ec0-495c-aa8c-0c0377615995'
+  PropagateID: '457a3d15-2ec0-495c-aa8c-0c0377615995'
+  ReservedCode1: '5fdcfbe9-4443-4eba-a310-0da79734eb52'
+  ReservedCode2: '5fdcfbe9-4443-4eba-a310-0da79734eb52'
 ---
 
 # Work Pet 🤖
@@ -48,13 +48,13 @@ AIGC:
 <table>
   <tr>
     <td align="center"><strong>账号列表与积分条</strong>（WorkBuddy）<br><img src="docs/images/workbuddy.png" width="240" alt="WorkBuddy 账号列表与积分条"/></td>
-    <td align="center"><strong>积分明细展开</strong><br><img src="docs/images/workbuddy-detail.png" width="240" alt="积分明细展开，到期时间排序，最近过期高亮"/></td>
-    <td align="center"><strong>CodeBuddy</strong><br><img src="docs/images/codebuddy.png" width="240" alt="CodeBuddy"/></td>
+    <td align="center"><strong>积分明细展开</strong>（WorkBuddy）<br><img src="docs/images/workbuddy-detail.png" width="240" alt="积分明细展开，到期时间排序，最近过期高亮"/></td>
+    <td align="center"><strong>CodeBuddy</strong>（Token 统计）<br><img src="docs/images/codebuddy.png" width="240" alt="CodeBuddy，顶部 Token 用量统计"/></td>
   </tr>
   <tr>
-    <td align="center"><strong>TraeWork</strong>（绿色积分条）<br><img src="docs/images/traework.png" width="240" alt="TraeWork，绿色积分条"/></td>
-    <td align="center"><strong>设置</strong><br><img src="docs/images/settings.png" width="240" alt="设置"/></td>
-    <td align="center"><strong>关于</strong><br><img src="docs/images/about.png" width="240" alt="关于页，版本与项目信息"/></td>
+    <td align="center"><strong>AutoClaw</strong>（Token 统计）<br><img src="docs/images/autoclaw.png" width="240" alt="AutoClaw，顶部 Token 用量统计与积分明细展开"/></td>
+    <td align="center"><strong>TraeWork</strong><br><img src="docs/images/traework.png" width="240" alt="TraeWork 账号列表"/></td>
+    <td align="center"><strong>关于</strong>（更新提示）<br><img src="docs/images/about.png" width="240" alt="关于页，版本与更新提示"/></td>
   </tr>
 </table>
 
