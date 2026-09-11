@@ -118,6 +118,11 @@ AIGC:
 > - 首次运行若本机登录过 AutoClaw，macOS 会弹出钥匙串授权框（允许访问 `autoclaw Safe Storage`），**请点击「始终允许」**，否则无法读取 AutoClaw 账号与积分；授权一次后不再打扰。
 > - AutoClaw 登录态在 macOS 上读取自 `~/Library/Application Support/autoclaw/auth.json`（对应 Windows 的 `%APPDATA%\autoclaw\auth.json`），解密逻辑已按 macOS 钥匙串实现。
 
+> **macOS 注意事项（CodeArts Agent）**
+>
+> - 登录态读取自 `~/Library/Application Support/CodeArts Agent/User/globalStorage/state.vscdb`，解密密钥存放在 macOS 登录钥匙串（`CodeArts Agent Safe Storage`）。首次拉取账号时若弹出钥匙串授权框，**请点击「始终允许」**，之后不再打扰。
+> - 切换账号会先自动退出 CodeArts Agent（未保存的编辑请先保存），写入登录态后按需自动重启。
+
 ---
 
 ## 工作原理

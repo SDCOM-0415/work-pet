@@ -1105,8 +1105,11 @@ const AC_APP_KEY = '38d2391985e2369a5fb8227d8e6cd5e5';
 // 无签到：额度按官方政策自动发放（不写死任何数字）。WorkPet 只做「多账号登录态管理 + 一键切换」。
 // 登录态 = VSCode 系数据目录 User/globalStorage/state.vscdb（SQLite ItemTable）里的两个键：
 //   1) secret://{"extensionId":"huaweicloud.authentication","key":"HuaweiCloudSession"}
-//      值为 {"type":"Buffer","data":[...]} 包装的 Electron safeStorage v10 密文
-//      （DPAPI 包裹 AES-256-GCM，key 在数据目录 Local State 的 os_crypt.encrypted_key，与 AutoClaw 同构），
+//      值为 {"type":"Buffer","data":[...]} 包装的 Electron safeStorage v10 密文，
+//      密钥获取按平台分（与 AutoClaw 同构）：
+//        Windows：AES-256-GCM，key 在数据目录 Local State 的 os_crypt.encrypted_key（DPAPI 包裹）；
+//        macOS：AES-128-CBC（IV 固定 16 空格），key = PBKDF2(钥匙串随机密码, 'saltysalt', 1003 次, 16B, sha1)，
+//          钥匙串条目 service "CodeArts Agent Safe Storage" / account "CodeArts Agent"（实测确认）。
 //      明文含 refresh_token（长期）+ 临时 IAM 凭证 expires_at（约 1h，客户端运行期间自动续）；
 //   2) huaweicloud.codearts-snap 键内含 userInfoKey（账号 id / 华为账号用户名 / 临时凭证快照）。
 // 切换 = 停客户端（IDE 会持有/回写 vscdb）→ 备份库密文写回 vscdb（同机原样写回；跨机导入的备份
@@ -1114,17 +1117,35 @@ const AC_APP_KEY = '38d2391985e2369a5fb8227d8e6cd5e5';
 const CA_SECRET_KEY_DEFAULT = 'secret://{"extensionId":"huaweicloud.authentication","key":"HuaweiCloudSession"}';
 const CA_SNAP_KEY = 'huaweicloud.codearts-snap';
 const CA_IDE_EXE = 'codearts-agent.exe';
+// Electron safeStorage 在 macOS 把随机密码存进登录钥匙串（与 AutoClaw 同构）。
+// 实测：-w 读密码必须同时带 -a，只给 -s 会报条目不存在。
+const CA_MAC_KEYCHAIN_SERVICE = 'CodeArts Agent Safe Storage';
+const CA_MAC_KEYCHAIN_ACCOUNT = 'CodeArts Agent';
+const CA_MAC_PBKDF2_SALT = Buffer.from('saltysalt', 'utf8');
+const CA_MAC_PBKDF2_ITERS = 1003;
+// macOS 主进程识别：路径形如 …/CodeArts Agent.app/Contents/MacOS/Electron（CFBundleExecutable
+// 固定为 "Electron"），Helper 子进程路径不含该子串，不会误伤。
+// 实测坑：Electron 主进程的 argv 区会被框架改写，pgrep/pkill -f 读不到它（Helper 却正常），
+// 进程检测/终止一律走 ps 全量枚举 + kill，绝不能用 pgrep/pkill。
+const CA_MAC_PROCESS_RE = /CodeArts[ _-]?Agent\.app\/Contents\/MacOS\/Electron(?: |$)/;
+// macOS AgentKernel 内核进程（路径形如 ~/.codeartsdoer/CodeArts_Agent/AgentKernel_*，名字带版本号）
+const CA_MAC_KERNEL_RE = /CodeArts_Agent\/AgentKernel_/;
 function detectCodeArtsDataDir() {
-  const roam = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   if (process.env.WORKPET_CODEARTS_DIR) {
     const d = process.env.WORKPET_CODEARTS_DIR;
     if (fs.existsSync(path.join(d, 'User', 'globalStorage', 'state.vscdb'))) return d;
   }
-  let names = [];
-  try { names = fs.readdirSync(roam).filter((n) => /^codearts[-_ ]?agent$/i.test(n)); } catch (_) {}
-  for (const n of names) {
-    const d = path.join(roam, n);
-    if (fs.existsSync(path.join(d, 'User', 'globalStorage', 'state.vscdb'))) return d;
+  // macOS: ~/Library/Application Support；Windows: %APPDATA%（目录名两平台都形如 "CodeArts Agent"）
+  const roots = isMac
+    ? [path.join(os.homedir(), 'Library', 'Application Support')]
+    : [process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')];
+  for (const root of roots) {
+    let names = [];
+    try { names = fs.readdirSync(root).filter((n) => /^codearts[-_ ]?agent$/i.test(n)); } catch (_) {}
+    for (const n of names) {
+      const d = path.join(root, n);
+      if (fs.existsSync(path.join(d, 'User', 'globalStorage', 'state.vscdb'))) return d;
+    }
   }
   return null;
 }
@@ -1133,7 +1154,12 @@ const CA_VSCDB = CA_DATA_DIR ? path.join(CA_DATA_DIR, 'User', 'globalStorage', '
 const CA_LOCAL_STATE = CA_DATA_DIR ? path.join(CA_DATA_DIR, 'Local State') : null;
 // CodeArts Agent（Doer 内核）侧的用户身份文件：切换账号时一并换回，保持内核会话一致
 const CA_DOER_USERINFO = path.join(os.homedir(), '.codeartsdoer', 'codearts-data', 'storage', 'userInfo.json');
-const CA_EXE_CANDIDATES = (process.env.WORKPET_CODEARTS_BIN ? [process.env.WORKPET_CODEARTS_BIN] : []).concat([
+// macOS 主二进制名固定为 "Electron"，且安装位置不限于 /Applications（找不到时 caFindExe 会从运行中进程反查）
+const CA_MAC_EXE_CANDIDATES = [
+  '/Applications/CodeArts Agent.app/Contents/MacOS/Electron',
+  path.join(os.homedir(), 'Applications', 'CodeArts Agent.app', 'Contents', 'MacOS', 'Electron'),
+];
+const CA_EXE_CANDIDATES = (process.env.WORKPET_CODEARTS_BIN ? [process.env.WORKPET_CODEARTS_BIN] : []).concat(isMac ? CA_MAC_EXE_CANDIDATES : [
   'D:/Program Files/CodeArts Agent/' + CA_IDE_EXE,
   path.join(process.env.ProgramFiles || 'C:/Program Files', 'CodeArts Agent', CA_IDE_EXE),
   path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'CodeArts Agent', CA_IDE_EXE),
@@ -1472,18 +1498,49 @@ function acSyncStoreAfterRefresh(accessToken, refreshToken, jwtExp) {
 }
 
 // ---------------- CodeArts Agent 登录态（safeStorage 解密 + state.vscdb 读写） ----------------
-// 与 AutoClaw 同构的 Electron safeStorage v10：DPAPI 解 Local State 的 key，再 AES-256-GCM 解密。
-// CodeArts 有自己独立的 Local State，key 缓存与 AC 分开维护。
+// 与 AutoClaw 同构的 Electron safeStorage v10。key 获取按平台分：
+//   Windows：DPAPI 解 Local State 的 key，再 AES-256-GCM；
+//   macOS：登录钥匙串读随机密码 → PBKDF2 派生，再 AES-128-CBC。
+// CodeArts 的 key 缓存与 AC 分开维护。
 
 const CA_KEY_PENDING = Symbol('ca-key-pending');
-let caKeyCache = null;    // 已解出的 CodeArts AES-256 key
+let caKeyCache = null;    // 已解出的 CodeArts AES key（Windows 32B / macOS 16B）
 let caKeyPromise = null;  // 进行中的异步解密（并发共享）
 
-/** 获取 CodeArts safeStorage AES key：只解一次并缓存；复用 AC 的 DPAPI 实现（入参即密文） */
+/** macOS：从登录钥匙串读 safeStorage 随机密码（异步 spawn + 15s 硬超时，绝不阻塞事件循环）。
+ *  首次访问若系统弹钥匙串授权框，用户点「始终允许」后不会再问（README 有说明）。 */
+function caMacReadKeychainPasswordAsync() {
+  return new Promise((resolve, reject) => {
+    const child = spawn('security', ['find-generic-password', '-s', CA_MAC_KEYCHAIN_SERVICE, '-a', CA_MAC_KEYCHAIN_ACCOUNT, '-w'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '', done = false;
+    const t = setTimeout(() => {
+      if (done) return; done = true;
+      try { child.kill('SIGKILL'); } catch (_) {}
+      reject(new Error('security 读取钥匙串超时'));
+    }, 15000);
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', (e) => { if (!done) { done = true; clearTimeout(t); reject(e); } });
+    child.on('close', (code) => {
+      if (done) return; done = true; clearTimeout(t);
+      const pw = String(out || '').trim();
+      if (code === 0 && pw) resolve(pw);
+      else reject(new Error('读取钥匙串失败(code=' + code + '): ' + (String(err || '').trim() || '无输出')));
+    });
+  });
+}
+
+/** macOS：钥匙串随机密码 → PBKDF2-HMAC-SHA1 派生 16B AES key（Electron/Chromium 固定参数） */
+function caMacDeriveKey(keychainPassword) {
+  return crypto.pbkdf2Sync(keychainPassword, CA_MAC_PBKDF2_SALT, CA_MAC_PBKDF2_ITERS, 16, 'sha1');
+}
+
+/** 获取 CodeArts safeStorage AES key：只解一次并缓存（Windows 复用 AC 的 DPAPI 实现，入参即密文） */
 function caRequestKey() {
   if (caKeyCache) return Promise.resolve(caKeyCache);
   if (!caKeyPromise) {
     caKeyPromise = (async () => {
+      if (isMac) return caMacDeriveKey(await caMacReadKeychainPasswordAsync());
       const ls = readJsonOrNull(CA_LOCAL_STATE);
       const enc = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
       if (!enc) throw new Error('CodeArts Local State 无 os_crypt.encrypted_key');
@@ -1551,13 +1608,18 @@ function caReadDb(retries) {
   return null;
 }
 
-/** 解密 vscdb 的 secret 值（{"type":"Buffer","data":[...]} → v10 → AES-256-GCM → 明文 JSON 字符串） */
+/** 解密 vscdb 的 secret 值（{"type":"Buffer","data":[...]} → v10 → 平台分支 → 明文 JSON 字符串） */
 function caDecryptVscSecret(vscValue, key) {
   const s = String(vscValue || '');
   let bytes;
   if (s.startsWith('{"type":"Buffer"')) bytes = Buffer.from(JSON.parse(s).data);
   else bytes = Buffer.from(s, 'latin1'); // 兼容旧形态
   if (bytes.slice(0, 3).toString('latin1') !== 'v10') throw new Error('非 safeStorage v10 格式');
+  if (isMac) {
+    // macOS：v10 + ciphertext，AES-128-CBC（IV 固定 16 空格 0x20，PKCS7）
+    const dec = crypto.createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+    return Buffer.concat([dec.update(bytes.slice(3)), dec.final()]).toString('utf8');
+  }
   const nonce = bytes.slice(3, 15), ct = bytes.slice(15);
   const tag = ct.slice(ct.length - 16), body = ct.slice(0, ct.length - 16);
   const dec = crypto.createDecipheriv('aes-256-gcm', key, nonce);
@@ -1567,6 +1629,12 @@ function caDecryptVscSecret(vscValue, key) {
 
 /** 用本机 key 把明文会话 JSON 重新加密成 vscdb 的 secret 值（跨机器恢复用） */
 function caEncryptVscSecret(plain, key) {
+  if (isMac) {
+    const cipher = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+    const ct = Buffer.concat([cipher.update(Buffer.from(plain, 'utf8')), cipher.final()]);
+    const bytes = Buffer.concat([Buffer.from('v10', 'latin1'), ct]);
+    return JSON.stringify({ type: 'Buffer', data: Array.from(bytes) });
+  }
   const nonce = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
   const ct = Buffer.concat([cipher.update(Buffer.from(plain, 'utf8')), cipher.final()]);
@@ -1658,7 +1726,38 @@ function caListAccounts() {
 
 // ---------------- CodeArts 进程管理 ----------------
 
+/** macOS：ps 全量枚举 CodeArts 主进程。
+ *  实测 Electron 主进程 argv 区被框架改写，pgrep/pkill -f 读不到它（Helper 却正常），
+ *  ps 的 command 列稳定可见，进程检测与终止都必须走这条路。返回 [{ pid, argv0 }]。 */
+function caMacListIdeProcs() {
+  try {
+    const out = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+    const list = [];
+    for (const line of String(out).split(/\r?\n/)) {
+      const m = line.match(/^\s*(\d+)\s+(.+)$/);
+      if (!m) continue;
+      const am = m[2].match(/(?:^|\s)(\S*CodeArts[ _-]?Agent\.app\/Contents\/MacOS\/Electron)(?: |$)/);
+      if (am) list.push({ pid: Number(m[1]), argv0: am[1] });
+    }
+    return list;
+  } catch (_) { return []; }
+}
+
+/** macOS：ps 全量枚举 AgentKernel 内核进程（路径 ~/.codeartsdoer/CodeArts_Agent/AgentKernel_*） */
+function caMacListKernelProcs() {
+  try {
+    const out = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+    const list = [];
+    for (const line of String(out).split(/\r?\n/)) {
+      const m = line.match(/^\s*(\d+)\s+(.+)$/);
+      if (m && CA_MAC_KERNEL_RE.test(m[2])) list.push({ pid: Number(m[1]) });
+    }
+    return list;
+  } catch (_) { return []; }
+}
+
 function caIsIdeRunning() {
+  if (isMac) return caMacListIdeProcs().length > 0;
   try {
     const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq ' + CA_IDE_EXE, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
     return out.includes(CA_IDE_EXE);
@@ -1666,8 +1765,27 @@ function caIsIdeRunning() {
 }
 
 /** 停 CodeArts Agent：先优雅关闭（给 IDE 保存未保存编辑的机会），等不到再强杀；
- *  最后清理 AgentKernel 内核进程（名字带版本号，需枚举后逐个杀）。 */
+ *  最后清理 AgentKernel 内核进程（名字带版本号，按路径匹配后逐个杀）。 */
 async function caKillIde() {
+  if (isMac) {
+    const procs = caMacListIdeProcs();
+    if (procs.length) {
+      try { execFileSync('osascript', ['-e', 'tell application "CodeArts Agent" to quit'], { stdio: 'ignore' }); } catch (_) {}
+      for (let i = 0; i < 6; i++) {
+        if (!caMacListIdeProcs().length) break;
+        await sleep(1000);
+      }
+      for (const p of caMacListIdeProcs()) { try { process.kill(p.pid, 'SIGTERM'); } catch (_) {} }
+      for (let i = 0; i < 5; i++) {
+        if (!caMacListIdeProcs().length) break;
+        await sleep(1000);
+      }
+      for (const p of caMacListIdeProcs()) { try { process.kill(p.pid, 'SIGKILL'); } catch (_) {} }
+    }
+    // 主进程退出会连带 Helper；再清理 AgentKernel 内核进程（路径 ~/.codeartsdoer/CodeArts_Agent/AgentKernel_*）
+    for (const p of caMacListKernelProcs()) { try { process.kill(p.pid, 'SIGKILL'); } catch (_) {} }
+    return;
+  }
   try { execFileSync('taskkill', ['/IM', CA_IDE_EXE, '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
   for (let i = 0; i < 6; i++) {
     if (!caIsIdeRunning()) break;
@@ -1689,9 +1807,14 @@ async function caKillIde() {
   } catch (_) {}
 }
 
-/** 定位 CodeArts Agent 可执行文件（切换后重启 / 启动设置用） */
+/** 定位 CodeArts Agent 可执行文件（切换后重启 / 启动设置用）。
+ *  macOS 上 App 可装在任意目录：候选路径找不到时从运行中的主进程反查安装位置。 */
 function caFindExe() {
-  return CA_EXE_CANDIDATES.find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } }) || null;
+  const found = CA_EXE_CANDIDATES.find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
+  if (found) return found;
+  if (!isMac) return null;
+  const proc = caMacListIdeProcs()[0];
+  return (proc && proc.argv0 && fs.existsSync(proc.argv0)) ? proc.argv0 : null;
 }
 
 function caLaunchIde() {
@@ -1951,6 +2074,9 @@ function acLaunchBinary() {
          path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw', 'AutoClaw.exe')]
         .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
     if (!exe) throw new Error('未找到 AutoClaw 可执行文件');
+    if (isMac && (() => { try { return !fs.existsSync(exe); } catch (_) { return true; } })()) {
+      throw new Error('未找到 AutoClaw 可执行文件（' + exe + '）');
+    }
     const args = ['--remote-debugging-port=' + port];
     if (isMac) {
       // 拉起前先杀旧实例：用户已开 / 上次拉起的实例都会带 single-instance-lock，
@@ -1970,7 +2096,10 @@ async function acLaunchMacWithRetry(exe, args, port, maxAttempts) {
     killAutoClaw();
     const gone = await waitProcessGone(exe, 5000);
     if (!gone) log(`[client:ac] 旧实例未在 5s 内退出（第 ${attempt} 次）`);
-    spawn(exe, args, { stdio: 'ignore', detached: true }).unref();
+    // spawn 的 ENOENT 等错误经异步 'error' 事件抛出，不监听会整个进程崩溃（unhandled 'error'）
+    const ch = spawn(exe, args, { stdio: 'ignore', detached: true });
+    ch.on('error', (e) => log(`[client:ac] 拉起 AutoClaw 失败: ${e.message}`));
+    ch.unref();
     log(`[client:ac] 已拉起 AutoClaw (--remote-debugging-port=${port}) 第 ${attempt} 次`);
     // 轮询端口就绪（最坏 15s）
     const dl = Date.now() + 15000;
@@ -3652,7 +3781,7 @@ async function main() {
     try {
       if (caIsIdeRunning()) log('[proc] CodeArts Agent 已在运行，跳过拉起');
       else if (caLaunchIde()) log('[proc] 已拉起 CodeArts Agent');
-      else log('[proc] 未找到 codearts-agent.exe，跳过拉起');
+      else log('[proc] 未找到 CodeArts Agent 可执行文件，跳过拉起');
     } catch (e) {
       log('[proc] 拉起 CodeArts Agent 异常: ' + e.message);
     }

@@ -21,6 +21,8 @@ desktop-ui/.vite/
 # ===== 本地 AI 工具工作区数据（含记忆/事件日志，不上传）=====
 .kagent/
 .workbuddy/
+.arts/
+.codeartsdoer/
 
 # ===== 调试/临时文件 =====
 *.bak
