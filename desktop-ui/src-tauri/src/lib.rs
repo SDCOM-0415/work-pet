@@ -60,20 +60,36 @@ fn resolve_codebuddy_exe() -> Option<PathBuf> {
     candidates.into_iter().find(|c| c.is_file())
 }
 
-/// macOS 上查找 CodeBuddy / WorkBuddy 应用（如有安装）。
+/// macOS 上查找客户端应用 bundle（如有安装）。
+///
+/// 注意：`.app` 是 bundle **目录**，必须用 `is_dir()` 判断。
+/// 早期版本这里写成了 `is_file()`，对目录恒为 `false`，于是即使应用就装在
+/// `/Applications` 也会被判为「未找到」——表现为点击 WorkBuddy 时提示
+/// 「未找到 WorkBuddy 应用」。`is_dir()` 在符号链接上也会跟随解析，符合预期。
 #[cfg(target_os = "macos")]
 fn resolve_client_exe(name: &str) -> Option<PathBuf> {
-    let candidate = PathBuf::from(format!("/Applications/{}.app", name));
-    if candidate.is_file() {
-        return Some(candidate);
-    }
-    // 也检查 ~/Applications
+    let mut roots = vec![PathBuf::from("/Applications")];
     if let Ok(home) = std::env::var("HOME") {
-        let alt = PathBuf::from(format!("{}/Applications/{}.app", home, name));
-        if alt.is_file() {
-            return Some(alt);
-        }
+        roots.push(PathBuf::from(&home).join("Applications"));
     }
+    let mut tried: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let candidate = root.join(format!("{}.app", name));
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        tried.push(candidate);
+    }
+    // 找不到时把尝试过的路径打到 stderr，便于从日志直接看出是「没装」还是「装在了别处」
+    eprintln!(
+        "[workpet] 未找到 {} 应用，已尝试: {}",
+        name,
+        tried
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     None
 }
 
@@ -290,8 +306,16 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<String, String> {
                 .output();
             std::thread::sleep(std::time::Duration::from_millis(2000));
         }
+        // 与 WorkBuddy 统一走 resolve_client_exe：原来硬编码 /Applications/AutoClaw.app，
+        // 未安装时只会抛「启动失败」，且装在 ~/Applications 时找不到。
+        let app = resolve_client_exe("AutoClaw").ok_or("未找到 AutoClaw 应用")?;
         std::process::Command::new("open")
-            .args(["-n", "/Applications/AutoClaw.app", "--args", "--remote-debugging-port=9226"])
+            .args([
+                "-n",
+                &app.display().to_string(),
+                "--args",
+                "--remote-debugging-port=9226",
+            ])
             .spawn()
             .map_err(|e| format!("启动 AutoClaw 失败: {e}"))?;
         return Ok("AC_LAUNCHED".into());
@@ -371,6 +395,9 @@ fn daemon_ready(state: tauri::State<BootstrapState>) -> Option<Result<(), String
 }
 
 /// 用系统默认浏览器打开外部链接（仅允许 https）
+///
+/// 平台分支必须齐：macOS 上原本只有 Windows 分支，函数会直接走到末尾的 `Ok(())`
+/// 而什么都不做 —— 表现为点了「成长中心」等外链毫无反应（且不报错，很难察觉）。
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
@@ -381,6 +408,13 @@ fn open_external(url: String) -> Result<(), String> {
         std::process::Command::new("cmd")
             .args(["/C", "start", "", &url])
             .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
             .spawn()
             .map_err(|e| e.to_string())?;
     }

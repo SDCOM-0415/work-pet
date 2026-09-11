@@ -3,8 +3,12 @@
 /**
  * TraeWork 签到宠物 daemon
  *
- * 为 TraeWork（品牌名 TraeWork CN / TRAE Work，安装目录沿用旧名 "TRAE SOLO CN"）
- * 提供 CDP 注入与签到机制，只保留三个能力：
+ * 为 TraeWork 提供 CDP 注入与签到机制，只保留三个能力：
+ *
+ * 注意：客户端安装目录会改名（TRAE SOLO CN → TraeWork CN），因此本文件一律不写死
+ * 品牌名做路径/进程匹配，统一按 TRAEWORK_NAME_RE「含 trae 且含 solo/work」动态探测
+ * （见 findTraeExecutable / findTraeDataDir / TRAE_PROCESS_ERE）。
+ * 普通版 Trae（Trae CN / Trae）是另一个产品，不在适配范围内，需排除。
  *   1) 桌面宠物机器人   —— 注入到 TraeWork 窗口内的 SVG 动画宠物
  *   2) 每日签到         —— 调用官方 checkin_credits/status + claim 接口
  *   3) 签到过期显示     —— 距下次签到倒计时 + 本次/累计积分与到期信息
@@ -28,6 +32,24 @@ const APP_BRAND = 'TraeWork';
 const DAEMON_VERSION = '1.0.3';
 const APP_VERSION = DAEMON_VERSION;
 const HOST = '127.0.0.1';
+
+// 自身脚本指纹：进程启动时读一次并缓存，随 /api/health 上报，供桌面端判断
+// 「47921 端口上那个常驻进程，是不是本安装包里的这份 daemon.js」。
+//
+// 为什么需要它：桌面端原本只比对版本号（DAEMON_VERSION vs app 版本），但同一版本号
+// 重新构建（本地修 bug 重打包、版本号没 bump）时版本号是一致的，于是旧常驻进程会被
+// 判定为「本包的」而一直被复用 —— 表现为换了 node 和 daemon.js，跑的还是旧逻辑
+// （例如内置 Node 已升 24，进程里却仍是 Node 20，CDP 全部失效）。
+//
+// 必须「启动时」读取并缓存：进程跑起来之后安装包可能已把 daemon.js 覆盖，
+// 那时再 statSync 拿到的是新文件，无法反映本进程实际加载的版本。
+const SELF_FINGERPRINT = (() => {
+  try {
+    const st = fs.statSync(__filename);
+    // 只用「字节数 + 整秒 mtime」，避免浮点毫秒在 JS/Rust 两侧的取整差异
+    return `${st.size}-${Math.floor(st.mtimeMs / 1000)}`;
+  } catch (_) { return ''; }
+})();
 
 // 语义化版本比较：a>b 返回正数，a<b 返回负数，相等返回 0（支持 v 前缀；
 // 预发布后缀按 semver 规则处理：同为 1.0.3 时 1.0.3 > 1.0.3-beta.3，正式版发布后测试版能收到更新提示）
@@ -177,11 +199,27 @@ const USER_DATA_ROOT = isMac
   ? path.join(os.homedir(), 'Library', 'Application Support')
   : path.join(os.homedir(), 'AppData', 'Roaming');
 
+// TraeWork 的安装目录/包名历经改名：TRAE SOLO CN → TraeWork CN。
+// 普通版 Trae（"Trae CN" / "Trae"）是另一个产品，不在本项目适配范围内，必须排除：
+// 否则会拉起错误的客户端、或读到别家产品的登录态。
+// 判定依据：名称含 trae，且同时含 solo 或 work。
+// 匹配：TRAE SOLO CN / TRAE SOLO / TraeWork CN / TraeWork
+// 排除：Trae CN / Trae
+const TRAEWORK_NAME_RE = /trae.*(solo|work)/i;
+
 const EXE_CANDIDATES = isMac
   ? [
+      '/Applications/TraeWork CN.app/Contents/MacOS/TraeWork CN',
       '/Applications/TRAE SOLO CN.app/Contents/MacOS/TRAE SOLO CN',
-      '/Applications/Trae CN.app/Contents/MacOS/Trae CN',
-      '/Applications/Trae.app/Contents/MacOS/Trae',
+      '/Applications/TraeWork.app/Contents/MacOS/TraeWork',
+      path.join(
+        os.homedir(),
+        'Applications',
+        'TraeWork CN.app',
+        'Contents',
+        'MacOS',
+        'TraeWork CN'
+      ),
       path.join(
         os.homedir(),
         'Applications',
@@ -193,18 +231,10 @@ const EXE_CANDIDATES = isMac
       path.join(
         os.homedir(),
         'Applications',
-        'Trae CN.app',
+        'TraeWork.app',
         'Contents',
         'MacOS',
-        'Trae CN'
-      ),
-      path.join(
-        os.homedir(),
-        'Applications',
-        'Trae.app',
-        'Contents',
-        'MacOS',
-        'Trae'
+        'TraeWork'
       ),
     ]
   : [
@@ -228,10 +258,9 @@ const EXE_CANDIDATES = isMac
     ];
 
 const DATA_DIR_CANDIDATES = [
+  'TraeWork CN',
   'TRAE SOLO CN',
-  'Trae CN',
   'TraeWork',
-  'Trae',
 ].map((name) => path.join(USER_DATA_ROOT, name));
 
 function findTraeExecutable() {
@@ -241,7 +270,7 @@ function findTraeExecutable() {
   if (!isMac) return '';
 
   // macOS 兜底：
-  // 扫描 /Applications 与 ~/Applications 中名称包含 Trae 的 .app。
+  // 扫描 /Applications 与 ~/Applications 中的 TraeWork.app（排除普通版 Trae）。
   for (const root of [
     '/Applications',
     path.join(os.homedir(), 'Applications'),
@@ -251,7 +280,7 @@ function findTraeExecutable() {
     try {
       apps = fs
         .readdirSync(root)
-        .filter((name) => /trae/i.test(name) && name.endsWith('.app'));
+        .filter((name) => TRAEWORK_NAME_RE.test(name) && name.endsWith('.app'));
     } catch (_) {}
 
     for (const app of apps) {
@@ -283,7 +312,7 @@ function findTraeDataDir() {
 
   try {
     for (const name of fs.readdirSync(USER_DATA_ROOT)) {
-      if (!/trae/i.test(name)) continue;
+      if (!TRAEWORK_NAME_RE.test(name)) continue;
 
       const dir = path.join(USER_DATA_ROOT, name);
 
@@ -502,14 +531,14 @@ function backupCurrentAccount() {
 }
 
 /**
- * 跨客户端收集：扫描 Roaming 下所有 Trae 系列客户端（TRAE SOLO CN / Trae CN /
- * TraeWork 等）的已登录账号，把有可用登录态的都并入备份库，实现「登录过的账号
+ * 跨客户端收集：扫描 Roaming 下所有 TraeWork 客户端（TRAE SOLO CN / TraeWork CN /
+ * TraeWork，不含普通版 Trae）的已登录账号，把有可用登录态的都并入备份库，实现「登录过的账号
  * 都能显示」。只读别的客户端 storage，绝不写回别人。
  */
 function collectAllTraeAccounts() {
   const roam = USER_DATA_ROOT;
   let dirs = [];
-  try { dirs = fs.readdirSync(roam).filter((n) => /trae/i.test(n)); } catch (_) {}
+  try { dirs = fs.readdirSync(roam).filter((n) => TRAEWORK_NAME_RE.test(n)); } catch (_) {}
   const saved = [];
   const store = loadStore();
   for (const name of dirs) {
@@ -1057,7 +1086,8 @@ const { extractCreditSegments, sortCreditSegments, mergeCreditSegments } = requi
 // ---------------- AutoClaw（智谱 AutoGLM 桌面端，独立账号体系） ----------------
 // 登录态 = %APPDATA%/autoclaw/auth.json（token/refreshToken 为 Electron safeStorage "enc:v10" 加密，
 //   密钥在 Local State 的 os_crypt.encrypted_key —— DPAPI 包裹的 AES-256-GCM key，与浏览器同构）。
-// 签到 = POST /autoclaw-proxy/proxy/autoclaw-task-complete { task_id: 'daily_signin' }（任务中心任务，每日 200 分）。
+// 签到 = POST /autoclaw-proxy/proxy/autoclaw-task-complete { task_id: 'daily_signin' }（任务中心任务，
+//   实测 daily_signin 的 reward_points 为 400，不写死数字，一律以服务端返回为准）。
 // 积分 = GET /agent-assetmgr/api/v1/points/expiring?biz_app_id=autoclaw（total_points / expiring_points）。
 // 签名头 = X-Auth-Appid/X-Auth-TimeStamp/X-Auth-Sign（md5(appid&ts&appkey)），token 走 Authorization Bearer。
 // Cookie 时限 = JWT exp（access_token 是 JWT，24h）；refresh 走 /userapi/v1/refresh（refresh_token 轮换，回写 auth.json）。
@@ -2026,13 +2056,18 @@ async function acCdpClickSignin() {
 async function acCdpEvalOnce(jsExpr) {
   const ports = [9226, 9225, 9224, 9223, 9222, 9227, 9228];
   let lastErr = null;
+  // 只保留最后一个端口的错误会掩盖真实原因：AutoClaw 实际监听 9226，而列表末尾的 9228
+  // 通常压根没监听，于是 9226 上的真实失败（ws 连接失败 / 页面内 JS 报错）会被
+  // "port9228不可达" 覆盖掉，日志里看不到任何有效线索。这里同时记住首个错误。
+  let firstErr = null;
+  const note = (m) => { if (firstErr === null) firstErr = m; lastErr = m; };
   for (const port of ports) {
     let ws = null;
     try {
       const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) }).then(r => r.json()).catch(() => null);
-      if (!Array.isArray(list)) { lastErr = `port${port}不可达`; continue; }
+      if (!Array.isArray(list)) { note(`port${port}不可达`); continue; }
       const target = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl && /AutoClaw|autoclaw/i.test(t.title || ''));
-      if (!target) { lastErr = `port${port}无AutoClaw页面`; continue; }
+      if (!target) { note(`port${port}无AutoClaw页面`); continue; }
       ws = new WebSocket(target.webSocketDebuggerUrl);
       await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('ws连接失败')); });
       let id = 0; const pend = new Map();
@@ -2041,12 +2076,12 @@ async function acCdpEvalOnce(jsExpr) {
       const r = await send('Runtime.evaluate', { expression: jsExpr, returnByValue: true, awaitPromise: true, scriptTimeout: 8000 });
       return r.result && r.result.value;
     } catch (e) {
-      lastErr = e.message;
+      note(e.message);
     } finally {
       if (ws) { try { ws.close(); } catch (_) {} }
     }
   }
-  throw new Error('CDP 不可用: ' + lastErr);
+  throw new Error('CDP 不可用: ' + (firstErr === lastErr ? String(lastErr) : `${firstErr} … ${lastErr}`));
 }
 
 /**
@@ -2977,7 +3012,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/api/health') {
       const auth = getAuth();
-      return sendJson(res, 200, { ok: true, app: APP_BRAND, version: DAEMON_VERSION, ts: Date.now(), authed: !auth.error });
+      return sendJson(res, 200, {
+        ok: true, app: APP_BRAND, version: DAEMON_VERSION, ts: Date.now(), authed: !auth.error,
+        // 脚本指纹 + 运行时 node 版本：桌面端据此识别「同版本号重新构建」导致的旧进程残留
+        fingerprint: SELF_FINGERPRINT, node: process.version,
+      });
     }
     if (req.method === 'GET' && url.pathname === '/api/checkin/status') {
       const r = await fetchStatus();
@@ -3393,10 +3432,29 @@ const EXE_NAME = isMac
   ? path.basename(CFG.exe || 'TRAE SOLO CN')
   : path.basename(CFG.exe || 'TRAE SOLO CN.exe');
 
+// pgrep -f 走 ERE 正则，这里有两个必须避开的坑：
+//
+// 1) 绝不能写成 '(\s|$)' —— JS 单引号字符串里 \s 不是合法转义，会被原样吞成 's'，
+//    实际生效的模式是 "(s|$)"；而真实命令行形如
+//    /Applications/XXX.app/Contents/MacOS/Electron，应用名后紧跟的是 '.' 而非 's'，
+//    于是 pgrep 永远无匹配 → isProcessRunning() 在 macOS 上恒为 false：
+//      · ensureTraeWorkWithCdp() 刚 spawn 完就判定「进程已退出」而 break，不再等 CDP 端口就绪
+//      · 两轮拉起都秒退 →「等待 TraeWork CDP 端口超时」，宿主 IPC 签到永远走不通。
+//
+// 2) 不要写死品牌名。安装目录已由 "TRAE SOLO CN" 改为 "TraeWork CN"，任何固定名称都会在
+//    下一次改名后再次失效。这里只约束「含 trae 且含 solo/work 的 .app 包内的
+//    Contents/MacOS/」——额外要求 solo/work 是为了排除普通版 Trae（"Trae CN" / "Trae"），
+//    那是另一个产品，不在本项目适配范围内（见 TRAEWORK_NAME_RE）。
+//    匹配：TRAE SOLO CN.app / TraeWork CN.app / TraeWork.app
+//    排除：Trae CN.app / Trae.app
+//    注意 ERE 不支持 (?i)，用字符类 [Tt][Rr][Aa][Ee] 等代替忽略大小写。
+const TRAE_PROCESS_ERE =
+  '/[Tt][Rr][Aa][Ee][^/]*([Ss][Oo][Ll][Oo]|[Ww][Oo][Rr][Kk])[^/]*\\.app/Contents/MacOS/';
+
 function isProcessRunning() {
   if (isMac) {
     try {
-      const out = execFileSync('pgrep', ['-f', '(/TRAE SOLO CN|/Trae CN|/TraeWork|/Trae)(\s|$)'], { encoding: 'utf8' });
+      const out = execFileSync('pgrep', ['-f', TRAE_PROCESS_ERE], { encoding: 'utf8' });
       return Boolean(out.trim());
     } catch (_) { return false; }
   }
@@ -3408,13 +3466,13 @@ function isProcessRunning() {
 
 function killTraeWork() {
   if (isMac) {
-    // 优先按已探测到的可执行路径结束，避免依赖固定 app 名称。
+    // 先按已探测到的可执行路径结束，再按通用路径模式兜底。
+    // 不再用写死的 app 名列表去 osascript quit：客户端已多次改名
+    // （TRAE SOLO CN → Trae CN → TraeWork CN），固定名称撑不过下一次改名。
     if (CFG.exe) {
       try { execFileSync('pkill', ['-f', CFG.exe], { stdio: 'ignore' }); } catch (_) {}
     }
-    for (const appName of ['TRAE SOLO CN', 'Trae CN', 'TraeWork', 'Trae']) {
-      try { execFileSync('osascript', ['-e', `tell application "${appName}" to quit`], { stdio: 'ignore' }); } catch (_) {}
-    }
+    try { execFileSync('pkill', ['-f', TRAE_PROCESS_ERE], { stdio: 'ignore' }); } catch (_) {}
   } else {
     try { execFileSync('taskkill', ['/IM', EXE_NAME, '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
   }

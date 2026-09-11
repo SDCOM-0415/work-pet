@@ -176,14 +176,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: workpet-macos
-          path: |
-            desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+          # 只上传 dmg：dmg 里已经是完整的 WorkPet.app，再额外打一份裸 .app
+          # 等于把 240MB 的应用重复打包一次（实测 artifact 从 ~319MB 降到 ~79MB）。
+          path: desktop-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
-      # 发布：仅正式版 tag（如 v1.0.4）发布双平台安装包；
-      # beta/rc/alpha 等测试版 tag 只做 CI 构建验证，安装包从 artifacts 下载，不创建 Release。
-      # 诊断信息写入 job summary（匿名浏览器可见），便于发布失败时定位。
+  # 发布：仅正式版 tag（如 v1.0.4）发布双平台安装包；
+  # beta/rc/alpha 等测试版 tag 只做 CI 构建验证，安装包从 artifacts 下载，不创建 Release。
+  # 诊断信息写入 job summary（匿名浏览器可见），便于发布失败时定位。
   release:
     name: Publish Release (stable tags)
     needs: [build-windows, build-macos]
