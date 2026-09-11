@@ -47,12 +47,14 @@ jobs:
           set -euo pipefail
           echo "使用构建 $RUN_ID（$RUN_SHA: $RUN_MSG）"
           mkdir -p dist
+          # gh run download 原生支持按 run + artifact 名下载（自动处理重定向与解压）
           for name in workpet-windows workpet-macos; do
-            ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$name\") | .id")
-            [ -n "$ART_ID" ] || { echo "缺少 artifact: $name"; exit 1; }
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/$ART_ID/zip" > "$name.zip"
-            unzip -q "$name.zip" -d "dist/$name"
-            echo "$name: $(find dist/$name -type f -printf '%s %p\n' | sort -rn | head -3)"
+            if gh run download "$RUN_ID" --name "$name" --repo "$GITHUB_REPOSITORY" --dir "dist/$name"; then
+              echo "$name: $(find dist/$name -type f -printf '%s %p\n' | sort -rn | head -3)"
+            else
+              echo "缺少 artifact: $name"
+              exit 1
+            fi
           done
 
       - name: Replace release assets
