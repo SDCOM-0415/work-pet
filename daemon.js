@@ -395,10 +395,18 @@ function KUe(t) {
   return pt.slice(vh);
 }
 
-/** 读取并解密登录态，返回 { token, userId, account, deviceId, raw } */
+/** 读取并解密登录态，返回 { token, userId, account, deviceId, raw }。
+ *  任何失败都只返回 { error }，绝不抛异常：/api/health 会调用本函数，
+ *  一旦抛出（如未安装 TraeWork 时 storageFile() 退化为相对路径导致 ENOENT），
+ *  健康检查返回 500，桌面端据此误判 daemon 版本不匹配，最终误报「后台服务启动超时」。 */
 function getAuth() {
-  const raw = fs.readFileSync(storageFile(), 'utf8');
-  const json = JSON.parse(raw);
+  if (!CFG.dataDir) return { error: '未找到 TraeWork 数据目录（TraeWork 未安装或未登录）' };
+  let json;
+  try {
+    json = JSON.parse(fs.readFileSync(storageFile(), 'utf8'));
+  } catch (e) {
+    return { error: '读取 storage.json 失败: ' + e.message };
+  }
   const deviceId = json['telemetry.devDeviceId'] || '';
   const secret = json['iCubeAuthInfo://icube.cloudide'];
   if (!secret) return { error: '未找到 iCubeAuthInfo://icube.cloudide' };
@@ -3140,9 +3148,12 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      const auth = getAuth();
+      // 健康检查永远返回 200：桌面端靠 version/fingerprint 判断 daemon 就绪，
+      // 此处一旦 500 会被误判为「版本不匹配」，误报「后台服务启动超时」。
+      let authed = false;
+      try { authed = !getAuth().error; } catch (_) {}
       return sendJson(res, 200, {
-        ok: true, app: APP_BRAND, version: DAEMON_VERSION, ts: Date.now(), authed: !auth.error,
+        ok: true, app: APP_BRAND, version: DAEMON_VERSION, ts: Date.now(), authed,
         // 脚本指纹 + 运行时 node 版本：桌面端据此识别「同版本号重新构建」导致的旧进程残留
         fingerprint: SELF_FINGERPRINT, node: process.version,
       });
