@@ -31,7 +31,7 @@ AIGC:
     <td align="center"><a href="https://www.codebuddy.cn/"><img src="desktop-ui/src/assets/codebuddy.png" width="40" alt="CodeBuddy"/><br><strong>CodeBuddy</strong></a></td>
     <td align="center"><a href="https://www.trae.cn/work"><img src="desktop-ui/src/assets/traework.png" width="40" alt="TraeWork"/><br><strong>TraeWork</strong></a></td>
     <td align="center"><a href="https://autoclaw.z.ai/"><img src="desktop-ui/src/assets/autoclaw.png" width="40" alt="AutoClaw"/><br><strong>AutoClaw</strong></a></td>
-    <td align="center"><a href="https://codearts.huaweicloud.com/download.html"><img src="desktop-ui/src/assets/codearts.png" width="40" alt="CodeArts Agent"/></a><br><strong>CodeArts Agent</strong></td>
+    <td align="center"><a href="https://codearts.huaweicloud.com/download.html"><img src="desktop-ui/src/assets/codearts.png" width="40" alt="CodeArts Agent"/><br><strong>CodeArts Agent</strong></a></td>
   </tr>
 </table>
 
@@ -117,6 +117,11 @@ AIGC:
 >
 > - 首次运行若本机登录过 AutoClaw，macOS 会弹出钥匙串授权框（允许访问 `autoclaw Safe Storage`），**请点击「始终允许」**，否则无法读取 AutoClaw 账号与积分；授权一次后不再打扰。
 > - AutoClaw 登录态在 macOS 上读取自 `~/Library/Application Support/autoclaw/auth.json`（对应 Windows 的 `%APPDATA%\autoclaw\auth.json`），解密逻辑已按 macOS 钥匙串实现。
+
+> **macOS 注意事项（CodeArts Agent）**
+>
+> - 登录态读取自 `~/Library/Application Support/CodeArts Agent/User/globalStorage/state.vscdb`，解密密钥存放在 macOS 登录钥匙串（`CodeArts Agent Safe Storage`）。首次拉取账号时若弹出钥匙串授权框，**请点击「始终允许」**，之后不再打扰。
+> - 切换账号会先自动退出 CodeArts Agent（未保存的编辑请先保存），写入登录态后按需自动重启。
 
 ---
 
