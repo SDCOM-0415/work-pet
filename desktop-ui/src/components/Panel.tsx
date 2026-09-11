@@ -253,7 +253,7 @@ export default function Panel(p: PanelProps) {
             )}
             title={tabShowText ? `${label}（拖拽调整顺序）` : `${label}（拖拽调整顺序；设置里可显示文字）`}
           >
-            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0" />
+            <img src={img} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0 object-contain" />
             {tabShowText && <span className="min-w-0 truncate">{label}</span>}
           </Button>
         ))}

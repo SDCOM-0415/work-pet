@@ -31,7 +31,7 @@ AIGC:
     <td align="center"><a href="https://www.codebuddy.cn/"><img src="desktop-ui/src/assets/codebuddy.png" width="40" alt="CodeBuddy"/><br><strong>CodeBuddy</strong></a></td>
     <td align="center"><a href="https://www.trae.cn/work"><img src="desktop-ui/src/assets/traework.png" width="40" alt="TraeWork"/><br><strong>TraeWork</strong></a></td>
     <td align="center"><a href="https://autoclaw.z.ai/"><img src="desktop-ui/src/assets/autoclaw.png" width="40" alt="AutoClaw"/><br><strong>AutoClaw</strong></a></td>
-    <td align="center"><a href="https://codearts.huaweicloud.com/download.html"><img src="desktop-ui/src/assets/codearts.png" width="40" alt="CodeArts Agent"/></a><br><strong>CodeArts Agent</strong></td>
+    <td align="center"><a href="https://codearts.huaweicloud.com/download.html"><img src="desktop-ui/src/assets/codearts.png" width="40" alt="CodeArts Agent"/><br><strong>CodeArts Agent</strong></a></td>
   </tr>
 </table>
 
