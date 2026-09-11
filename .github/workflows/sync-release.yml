@@ -37,15 +37,16 @@ jobs:
             [ "$RUN_ID" != "null" ] || { echo "main 上没有成功的构建"; exit 1; }
           fi
           echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          # 注意：GITHUB_ENV 值含空格会导致后续步骤 unbound variable，只传 SHA
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" \
-            --jq '"RUN_SHA=" + .head_sha[0:7] + " RUN_MSG=" + (.head_commit.message | split("\n")[0])' >> "$GITHUB_ENV"
+            --jq '"RUN_SHA=" + .head_sha[0:7]' >> "$GITHUB_ENV"
 
       - name: Download build artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          echo "使用构建 $RUN_ID（$RUN_SHA: $RUN_MSG）"
+          echo "使用构建 $RUN_ID（commit $RUN_SHA）"
           mkdir -p dist
           # gh run download 原生支持按 run + artifact 名下载（自动处理重定向与解压）
           for name in workpet-windows workpet-macos; do
@@ -65,7 +66,7 @@ jobs:
           set -euo pipefail
           echo "## Release 资产同步" >> "$GITHUB_STEP_SUMMARY"
           echo "- 目标 tag: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- 构建来源: run $RUN_ID（\`$RUN_SHA\` $RUN_MSG）" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 构建来源: run $RUN_ID（``$RUN_SHA``）" >> "$GITHUB_STEP_SUMMARY"
 
           SETUP=$(find dist/workpet-windows -type f -name "*-setup.exe" | head -1)
           DMG=$(find dist/workpet-macos -type f -name "*.dmg" | head -1)
