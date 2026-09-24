@@ -6,15 +6,23 @@ import { ExpiryBar, fmtMonthDay, nextExpiry } from "@/components/PackBar";
 import { fmtCredits } from "@/api";
 import { cn } from "@/lib/utils";
 
-/// 手机号打码：前 3 位 + 星号 + 后 4 位
-export function maskPhone(phone?: string): string {
-  const p = phone || "-";
+/// 手机号打码：前 3 位 + 星号 + 后 4 位；邮箱形态（如 ZCode 账号标识）保留域名、只打码本地部分
+export function maskPhone(phone?: unknown): string {
+  const p = typeof phone === "string" ? phone : "";
+  if (!p) return "-";
+  const at = p.indexOf("@");
+  if (at > 0) {
+    const local = p.slice(0, at);
+    const domain = p.slice(at);
+    if (local.length <= 7) return local + domain;
+    return local.slice(0, 3) + "*".repeat(local.length - 7) + local.slice(-4) + domain;
+  }
   if (p.length <= 7) return p;
   return p.slice(0, 3) + "*".repeat(p.length - 7) + p.slice(-4);
 }
 
-function displayPhone(phone: string | undefined, full?: boolean): string {
-  const src = phone || "-";
+function displayPhone(phone: unknown, full?: boolean): string {
+  const src = typeof phone === "string" && phone ? phone : "-";
   return full ? src : maskPhone(src);
 }
 
@@ -35,6 +43,8 @@ export interface SharedCardProps {
   isCurrent: boolean;
   /// 签到徽标；null 不显示。tone: success=已签 / warning=签到中 / muted=未签
   badge?: { text: string; tone: "success" | "warning" | "muted" | "danger" } | null;
+  /// 第二徽标（如成长空间旅行状态）；与签到徽标并列显示
+  badge2?: { text: string; tone: "success" | "warning" | "muted" | "danger" } | null;
   signing?: boolean;
   /// 剩余积分合计（null 不显示数值）
   credits: number | null;
@@ -103,6 +113,20 @@ export default function SharedAccountCard(p: SharedCardProps) {
             {p.badge.text}
           </Badge>
         ) : null}
+        {p.badge2 && (
+          <Badge
+            className={cn(
+              "h-5 shrink-0 cursor-default rounded-md border-0 px-1.5 text-[10px]",
+              p.badge2.tone === "success" && "bg-success text-white",
+              p.badge2.tone === "warning" && "bg-warning text-white",
+              p.badge2.tone === "danger" && "bg-destructive text-white",
+              p.badge2.tone === "muted" && "border border-violet-400/40 bg-violet-400/10 text-violet-600 dark:text-violet-300"
+            )}
+            title={p.badge2.tone === "muted" ? "成长空间自动旅行" : undefined}
+          >
+            {p.badge2.text}
+          </Badge>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           {p.onOpenProfile && (
             <Button
@@ -230,8 +254,10 @@ export default function SharedAccountCard(p: SharedCardProps) {
                   >
                     {fmtCredits(e.remaining)}/{fmtCredits(e.limit)}
                   </span>
+                  {/* expire_sec <= 0 = 服务端没给过期时间（AStudio / AutoClaw 的积分就是这种）。
+                      ⚠️ 不能直接 fmtMonthDay(0)：那会算成 1970-01-01 并显示「1/1 过期」。 */}
                   <span className="shrink-0 text-muted-foreground">
-                    {fmtMonthDay(e.expire_sec)} 过期
+                    {e.expire_sec > 0 ? `${fmtMonthDay(e.expire_sec)} 过期` : "长期有效"}
                   </span>
                 </div>
                 );

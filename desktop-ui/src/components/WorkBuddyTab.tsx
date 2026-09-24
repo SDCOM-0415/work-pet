@@ -9,6 +9,8 @@ import { fmtCredits, fmtTokens, clientTokenUsage, openExternal, clientAccounts, 
 
 // 支持 Token 用量统计的客户端（本机会话日志扫描，daemon 60s 缓存）
 const TOKEN_USAGE_KINDS = new Set<ClientKind>(["wb", "cb", "ac"]);
+// 无签到客户端（ZCode）：仅账号备份/切换，不显示签到进度/积分/签到按钮
+const NO_CHECKIN_KINDS = new Set<ClientKind>(["zc"]);
 
 /// 签到徽标：兼容对象/字符串两种形态
 function checkinBadge(a: ClientAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
@@ -22,6 +24,19 @@ function checkinBadge(a: ClientAccount): { text: string; tone: "success" | "warn
   }
   if (c.ok === true) return { text: "已签", tone: "success" };
   if (c.ok === false) return { text: "未签", tone: "muted" };
+  return null;
+}
+
+/// 旅行徽标（成长空间自动旅行；与签到徽标并列显示，互不挤占）
+function travelBadge(a: ClientAccount): { text: string; tone: "success" | "warning" | "muted" } | null {
+  const t = a.travel;
+  if (!t || t.error) return null;
+  if (t.state === "traveling") {
+    const mins = Math.max(0, Math.ceil((t.arriveInSec || 0) / 60));
+    return { text: `旅行中·${t.locationName || ""} 剩${mins}分`, tone: "muted" };
+  }
+  // 今日旅行奖励已领取（idle）：紫色到账徽章（与「旅行中」同族配色）
+  if (t.claimedCredit) return { text: `已到账 +${t.claimedCredit} 积分`, tone: "muted" };
   return null;
 }
 
@@ -55,6 +70,10 @@ export default function WorkBuddyTab({
   const [restartArmed, setRestartArmed] = useState(false);
   // Token 用量统计（仅 WorkBuddy 有数据）
   const [usage, setUsage] = useState<WbTokenUsage | null>(null);
+  // ZCode：无签到/无积分，统计行与启动按钮文案随之降级
+  const noCheckin = NO_CHECKIN_KINDS.has(kind);
+  const launchBtnText = noCheckin ? `启动 ${label}` : `启动 ${label}（CDP 注入）`;
+  const restartBtnText = `确认重启 ${label}`;
   const accountsRef = useRef<ClientAccount[] | null>(null);
   // 积分缓存镜像（ref 便于轮询时判断哪些 uid 还没加载/失败需重试）
   const creditsRef = useRef<Record<string, ClientCredits | "loading" | "error">>({});
@@ -64,6 +83,7 @@ export default function WorkBuddyTab({
   }, []);
   // 每账号积分懒加载（串行，避免瞬时请求过密）；失败保留 error 位 → 轮询自动重试
   const loadCredits = useCallback(async (list: ClientAccount[]) => {
+    if (NO_CHECKIN_KINDS.has(kind)) return; // ZCode 无积分接口，不请求
     for (const a of list) {
       const cur = creditsRef.current[a.uid];
       if (cur !== undefined && cur !== "error") continue;
@@ -85,7 +105,7 @@ export default function WorkBuddyTab({
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [kind]);
 
   useEffect(() => {
     accountsRef.current = accounts;
@@ -109,6 +129,14 @@ export default function WorkBuddyTab({
         setLaunchMsg("已复用 AutoClaw 调试实例（CDP 已就绪）。");
       } else if (res === "AC_LAUNCHED") {
         setLaunchMsg(force ? "已重启 AutoClaw（CDP 调试模式）。" : "已以 CDP 调试模式启动 AutoClaw。");
+      } else if (res === "AS_REUSED") {
+        setLaunchMsg("已复用 AStudio 调试实例（CDP 已就绪）。");
+      } else if (res === "AS_LAUNCHED") {
+        setLaunchMsg(force ? "已重启 AStudio（CDP 调试模式）。" : "已以 CDP 调试模式启动 AStudio。");
+      } else if (res === "ZC_REUSED") {
+        setLaunchMsg("ZCode 已在运行。");
+      } else if (res === "ZC_LAUNCHED") {
+        setLaunchMsg(force ? "已重启 ZCode。" : "已启动 ZCode。");
       } else {
         setLaunchMsg(null);
       }
@@ -122,6 +150,9 @@ export default function WorkBuddyTab({
       } else if (msg.includes("AC_RUNNING_NO_CDP")) {
         setRestartArmed(true);
         setLaunchMsg("AutoClaw 正在运行（未开调试端口）。再点一次「确认重启」将关闭它并以注入模式重启。");
+      } else if (msg.includes("AS_RUNNING_NO_CDP")) {
+        setRestartArmed(true);
+        setLaunchMsg("AStudio 正在运行（未开调试端口）。再点一次「确认重启」将关闭它并以调试模式重启。");
       } else {
         setLaunchMsg(msg);
       }
@@ -148,8 +179,9 @@ export default function WorkBuddyTab({
         const st = await clientStatus(kind);
         const running = !!st.batch?.running;
         setBatchRunning(running);
-        // 批量进行中、或签到状态还没拿到（批量期间接口返回 null）时，立即刷新
-        const missing = accountsRef.current?.some((a) => a.checkin == null);
+        // 批量进行中、或签到状态还没拿到（批量期间接口返回 null）时，立即刷新；
+        // 无签到客户端（ZCode）checkin 恒为 null，不参与该判定（否则每 3s 全量拉取）
+        const missing = !noCheckin && accountsRef.current?.some((a) => a.checkin == null);
         if (running || missing) await load(false);
         // 积分加载失败/缺失的账号自动重试（daemon 瞬时不可用后自愈，无需手动刷新）
         if (accountsRef.current) void loadCredits(accountsRef.current);
@@ -205,9 +237,15 @@ export default function WorkBuddyTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountsKey]);
 
-  // 切到本 Tab 时静默刷新积分：不重新拉账号列表、不显示加载态，旧积分先保持显示，新的到了直接替换
+  // 切到本 Tab 时静默刷新：不重新拉账号列表、不显示加载态，旧积分先保持显示，新的到了直接替换。
+  // 无签到客户端（ZCode）：连账号一并重拉 —— 客户端里换号后，切回该 Tab 立即看到新账号
   useEffect(() => {
-    if (active && accountsRef.current) void loadCredits(accountsRef.current);
+    if (!active) return;
+    if (noCheckin) {
+      void load(false);
+      return;
+    }
+    if (accountsRef.current) void loadCredits(accountsRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -263,13 +301,18 @@ export default function WorkBuddyTab({
           setSwitchedMsg("后台服务未运行，无法启动客户端");
         }
       } else {
-        await clientSwitch(kind, uid);
-        const st = await clientStatus(kind).catch(() => null);
-        const cdpUp = !!(st && (st as { cdp?: { connected?: boolean } }).cdp?.connected);
-        if (cdpUp) {
-          setSwitchedMsg(`已切换到该账号，窗口已刷新生效；再点一次其按钮可启动 ${label}`);
+        const r = await clientSwitch(kind, uid);
+        if (r?.hint) {
+          // daemon 返回的提示最准确（含「已切换并重启 X」「该账号已是当前登录账号」等）
+          setSwitchedMsg(r.hint);
         } else {
-          setSwitchedMsg(`已切换到该账号；再点一次其按钮即可启动 ${label}`);
+          const st = await clientStatus(kind).catch(() => null);
+          const cdpUp = !!(st && (st as { cdp?: { connected?: boolean } }).cdp?.connected);
+          if (cdpUp) {
+            setSwitchedMsg(`已切换到该账号，窗口已刷新生效；再点一次其按钮可启动 ${label}`);
+          } else {
+            setSwitchedMsg(`已切换到该账号；再点一次其按钮即可启动 ${label}`);
+          }
         }
         await load(false);
       }
@@ -297,7 +340,7 @@ export default function WorkBuddyTab({
               className="h-7 rounded-full px-3 text-xs"
               onClick={() => void runLaunch(restartArmed)}
             >
-              {restartArmed ? "确认重启 CodeBuddy" : `启动 ${label}（CDP 注入）`}
+              {restartArmed ? restartBtnText : launchBtnText}
             </Button>
           )}
           {onLaunchCli && (
@@ -337,20 +380,24 @@ export default function WorkBuddyTab({
         <span className="text-muted-foreground">
           账号数 <span className="font-semibold text-foreground">{accounts.length}</span>
         </span>
-        <span className="h-3 w-px bg-border" />
-        {batchRunning ? (
-          <Badge className="h-5 rounded-full border-0 bg-warning px-2 text-[10px] text-white">
-            <Loader2 className="mr-0.5 h-3 w-3 animate-spin" /> 签到中…
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">
-            已签 <span className="font-semibold text-foreground">{signedCount}</span>/{accounts.length}
-          </span>
+        {!noCheckin && (
+          <>
+            <span className="h-3 w-px bg-border" />
+            {batchRunning ? (
+              <Badge className="h-5 rounded-full border-0 bg-warning px-2 text-[10px] text-white">
+                <Loader2 className="mr-0.5 h-3 w-3 animate-spin" /> 签到中…
+              </Badge>
+            ) : (
+              <span className="text-muted-foreground">
+                已签 <span className="font-semibold text-foreground">{signedCount}</span>/{accounts.length}
+              </span>
+            )}
+            <span className="h-3 w-px bg-border" />
+            <span className="text-muted-foreground">
+              总积分 <span className="font-semibold text-foreground">{fmtCredits(totalCredits)}</span>
+            </span>
+          </>
         )}
-        <span className="h-3 w-px bg-border" />
-        <span className="text-muted-foreground">
-          总积分 <span className="font-semibold text-foreground">{fmtCredits(totalCredits)}</span>
-        </span>
         <span className="ml-auto" />
         {onLaunchCli && (
           <Button
@@ -365,7 +412,7 @@ export default function WorkBuddyTab({
       </div>
 
       {/* Token 用量行（WorkBuddy / CodeBuddy / AutoClaw；本机会话日志统计，不上传） */}
-      {TOKEN_USAGE_KINDS.has(kind) && usage && (
+      {TOKEN_USAGE_KINDS.has(kind) && usage && usage.all.requests > 0 && (
         <div
           className="flex items-center gap-3 rounded-lg bg-muted/40 px-3 py-1.5 text-[11px]"
           title={`今日 ${usage.today.requests} 次请求 · 输入 ${fmtTokens(usage.today.input)}（含缓存命中 ${fmtTokens(usage.today.cached)}）· 输出 ${fmtTokens(usage.today.output)}`}
@@ -384,11 +431,16 @@ export default function WorkBuddyTab({
           </span>
         </div>
       )}
+      {TOKEN_USAGE_KINDS.has(kind) && usage && usage.all.requests === 0 && kind === "wb" && (
+        <div className="rounded-lg bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+          新版 WorkBuddy 未在本地记录 token 用量，暂无法统计
+        </div>
+      )}
 
       {accounts.length === 0 ? (
         <div className="flex flex-col items-start gap-2 px-1">
           <p className="text-[11px] text-muted-foreground">
-            暂无 {label} 账号。启动 {label}（CDP 注入）后登录，账号会自动备份到这里。
+            暂无 {label} 账号。{noCheckin ? `启动 ${label} 并登录` : `启动 ${label}（CDP 注入）后登录`}，账号会自动备份到这里。
           </p>
           {onLaunch && (
             <Button
@@ -397,7 +449,7 @@ export default function WorkBuddyTab({
               className="h-7 rounded-full px-3 text-xs"
               onClick={() => void runLaunch(restartArmed)}
             >
-              {restartArmed ? "确认重启 CodeBuddy" : `启动 ${label}（CDP 注入）`}
+              {restartArmed ? restartBtnText : launchBtnText}
             </Button>
           )}
           {onLaunchCli && (
@@ -413,6 +465,7 @@ export default function WorkBuddyTab({
             {accounts.map((a) => {
               const c = credits[a.uid];
               const badge = checkinBadge(a);
+              const badge2 = travelBadge(a);
               const isCurrent = currentUid === a.uid;
               const segs = typeof c === "object" ? c.segments : [];
               return (
@@ -424,6 +477,7 @@ export default function WorkBuddyTab({
                   cookieExpireSec={toExpireSec(a.tokenExpiresAt ?? null)}
                   isCurrent={isCurrent}
                   badge={badge}
+                  badge2={badge2}
                   signing={badge?.tone !== "success" && batchRunning}
                   credits={typeof c === "object" ? c.credits : null}
                   packs={segs.map((s) => ({

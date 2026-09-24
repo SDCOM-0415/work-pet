@@ -14,12 +14,16 @@ import {
   refreshEntitlements,
   refreshStatus,
   switchAccount,
+  clientAccounts,
   clientAccountsClaim,
+  clientStatus,
   launchCodeBuddy,
+  launchZcode,
   getConfig,
   saveConfig,
   exportAllAccounts,
   checkUpdate,
+  type ClientKind,
 } from "@/api";
 
 type Bootstrap = "booting" | "ready" | "failed";
@@ -215,7 +219,7 @@ export default function App() {
   const doBackup = useCallback(async () => {
     try {
       const r = await exportAllAccounts();
-      const n = r.counts.traework + r.counts.workbuddy + r.counts.codebuddy + r.counts.autoclaw + r.counts.codearts;
+      const n = r.counts.traework + r.counts.workbuddy + r.counts.codebuddy + r.counts.autoclaw + r.counts.codearts + r.counts.astudio + r.counts.zcode;
       showBubble(`已备份 ${n} 个账号 → ${r.file}`, 4000);
     } catch (e) {
       showBubble(`备份失败：${String(e).slice(0, 80)}`, 4000);
@@ -247,6 +251,8 @@ export default function App() {
   // 自动全账号签到：每次启动只执行一次（daemon 端自带限流重试）；
   // 托盘「TraeWork 全部签到」与面板「全部签到」按钮复用同一入口。
   const pollRef = useRef<number | null>(null);
+  // 「全部签到」汇总模式的时间窗：窗口内抑制 Trae 轮询的独立气泡（避免和汇总气泡竞态）
+  const claimAllAggUntilRef = useRef(0);
   const currentUidRef = useRef<string | null>(null);
   currentUidRef.current = current?.uid ?? null;
   const startAutoClaimAll = useCallback(() => {
@@ -275,12 +281,15 @@ export default function App() {
             setClaimRunning(false);
             const okCount = p.results.filter((r) => r.ok).length;
             const failed = p.results.filter((r) => !r.ok).length;
-            showBubble(
-              failed === 0
-                ? `全部签到完成 ${okCount}/${p.results.length} 🎉`
-                : `签到完成 ${okCount}/${p.results.length}，未成功的可稍后手动重试`,
-              3200
-            );
+            // 汇总模式（面板「全部签到」按钮）时间窗内不弹 Trae 专属气泡，由汇总气泡统一报告
+            if (Date.now() > claimAllAggUntilRef.current) {
+              showBubble(
+                failed === 0
+                  ? `TraeWork 签到完成 ${okCount}/${p.results.length} 🎉`
+                  : `TraeWork 签到完成 ${okCount}/${p.results.length}，未成功的可稍后手动重试`,
+                3200
+              );
+            }
             setClaimResults(
               Object.fromEntries(
                 p.results.map((r) => [r.uid, { ok: r.ok, already: r.already, msg: r.msg }])
@@ -319,6 +328,12 @@ export default function App() {
         if (c.caLaunchOnStart) {
           void invoke("launch_codearts", { force: false }).catch(() => {});
         }
+        if (c.asLaunchOnStart) {
+          void invoke<string>("launch_astudio", { force: false }).catch(() => {});
+        }
+        if (c.zcLaunchOnStart) {
+          void launchZcode().catch(() => {});
+        }
         if (!c.wbLaunchOnStart) return;
         return invoke("launch_workbuddy").catch(() => {});
       })
@@ -347,6 +362,7 @@ export default function App() {
         case "claim":
           startAutoClaimAllRef.current(); // TraeWork 全部账号
           void clientAccountsClaim("wb").catch(() => {});
+          void clientAccountsClaim("as").catch(() => {});
           break;
         case "theme":
           setThemeDark((d) => !d);
@@ -406,15 +422,42 @@ export default function App() {
             displayCurrentUid={claimRunning ? frozenCurrentUidRef.current : null}
             onClaimAll={() =>
               void (async () => {
-                showBubble("双端全部签到开始…", 3200);
-                startAutoClaimAllRef.current(); // TraeWork 全部账号
-                try {
-                  void clientAccountsClaim("wb").catch(() => {});
-                } catch {}
-                try {
-                  
-                  void clientAccountsClaim("cb").catch(() => {});
-                } catch {}
+                showBubble("全部签到开始…", 3600);
+                claimAllAggUntilRef.current = Date.now() + 90_000; // 时间窗内 Trae 轮询的独立气泡静默
+                startAutoClaimAllRef.current(); // TraeWork 全部账号（旋转轮换）
+                // 各客户端批量：daemon 端会拉取当前全部账号并逐个签到（含 WorkBuddy 自动旅行）
+                const kinds: ClientKind[] = ["wb", "cb", "as"];
+                for (const k of kinds) {
+                  try {
+                    void clientAccountsClaim(k).catch(() => {});
+                  } catch {}
+                }
+                // 等各端批量结束（最长 ~90s）
+                const deadline = Date.now() + 90_000;
+                while (Date.now() < deadline) {
+                  const sts = await Promise.all(
+                    kinds.map((k) => clientStatus(k).catch(() => null))
+                  );
+                  if (sts.every((s) => !s || !s.batch || !s.batch.running)) break;
+                  await new Promise((r) => setTimeout(r, 1500));
+                }
+                // 汇总：重新拉取各端当前全部账号，统计今日已签
+                let total = 0;
+                let ok = 0;
+                for (const k of kinds) {
+                  try {
+                    const v = await clientAccounts(k);
+                    for (const a of v.accounts) {
+                      total++;
+                      const c = a.checkin;
+                      if (c && typeof c === "object" && c.ok) ok++;
+                    }
+                  } catch {}
+                }
+                // 90s 时间窗内 Trae 轮询的独立气泡静默（防止和汇总气泡竞态重复弹出）
+                claimAllAggUntilRef.current = Date.now() + 90_000;
+                showBubble(total ? `全部签到完成 ${ok}/${total} 🎉` : "全部签到已开始", 4200);
+                await refreshAll(false);
               })()
             }
             onRefresh={() =>
@@ -506,6 +549,7 @@ export default function App() {
                   startAutoClaimAllRef.current();
                   void clientAccountsClaim("wb").catch(() => {});
                   void clientAccountsClaim("cb").catch(() => {});
+                  void clientAccountsClaim("as").catch(() => {});
                 },
               },
               {

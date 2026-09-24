@@ -50,6 +50,18 @@ export interface ClientCheckin {
   message?: string;
 }
 
+/// WorkBuddy 成长空间自动旅行状态（daemon 云端轮询的最近一次结果）
+export interface ClientTravel {
+  state?: string;
+  locationName?: string;
+  arriveInSec?: number;
+  rewardCredit?: number;
+  claimedCredit?: number;
+  dailyLimitReached?: boolean;
+  recordId?: number;
+  error?: string;
+}
+
 export interface ClientAccount {
   uid: string;
   nickname: string;
@@ -57,6 +69,7 @@ export interface ClientAccount {
   tokenExpiresAt?: number; // ms
   sessionExpiresAt?: number; // ms（CodeArts 会话临时凭证有效期，约 1h，客户端运行期间自动续）
   checkin?: ClientCheckin | string | null;
+  travel?: ClientTravel | null;
 }
 
 export interface ClientSegment {

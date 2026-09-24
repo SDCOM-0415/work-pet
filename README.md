@@ -13,7 +13,7 @@ AIGC:
 
 **语言：** 简体中文
 
-> **Work Pet 是多 AI Agent（WorkBuddy、CodeBuddy、TraeWork、AutoClaw、CodeArts Agent）签到宠物：打开即自动为全部账号签到；多账号集中管理与一键切换；积分条按到期时间归类，到期一目了然；WorkBuddy / CodeBuddy / AutoClaw 还能查看本机 Token 用量统计。账号与配置全部留在本机。**
+> **Work Pet 是多 AI Agent（WorkBuddy、CodeBuddy、TraeWork、AutoClaw、CodeArts Agent、AStudio、ZCode）签到宠物：打开即自动为全部账号签到（ZCode 无签到，仅多账号管理）；多账号集中管理与一键切换；WorkBuddy 成长空间自动旅行；积分条按到期时间归类，到期一目了然；WorkBuddy / CodeBuddy / AutoClaw 还能查看本机 Token 用量统计。账号与配置全部留在本机。**
 > 本机回环 CDP 注入 · 不改官方安装包 · 安装后无需 Node.js / Python 环境
 
 一个基于 **Chrome DevTools Protocol (CDP)** 的多 AI 编程客户端增强工具。
@@ -31,15 +31,21 @@ AIGC:
     <td align="center"><a href="https://www.codebuddy.cn/"><img src="desktop-ui/src/assets/codebuddy.png" width="40" alt="CodeBuddy"/><br><strong>CodeBuddy</strong></a></td>
     <td align="center"><a href="https://www.trae.cn/work"><img src="desktop-ui/src/assets/traework.png" width="40" alt="TraeWork"/><br><strong>TraeWork</strong></a></td>
     <td align="center"><a href="https://autoclaw.z.ai/"><img src="desktop-ui/src/assets/autoclaw.png" width="40" alt="AutoClaw"/><br><strong>AutoClaw</strong></a></td>
+  </tr>
+  <tr>
     <td align="center"><a href="https://codearts.huaweicloud.com/download.html"><img src="desktop-ui/src/assets/codearts.png" width="40" alt="CodeArts Agent"/><br><strong>CodeArts Agent</strong></a></td>
+    <td align="center"><img src="desktop-ui/src/assets/astudio.png" width="40" alt="AStudio"/><br><strong>AStudio</strong></td>
+    <td align="center"><img src="desktop-ui/src/assets/zcode.png" width="40" alt="ZCode"/><br><strong>ZCode</strong></td>
   </tr>
 </table>
 
 - [WorkBuddy](https://www.codebuddy.cn/work/)：腾讯 WorkBuddy AI 办公 Agent
 - [CodeBuddy](https://www.codebuddy.cn/)：腾讯云代码助手
 - [TraeWork](https://www.trae.cn/work)：字节跳动 TRAE AI 原生工作台
-- [AutoClaw](https://autoclaw.z.ai/)：Z.ai 本地 AI Agent
+- [AutoClaw](https://autoclaw.z.ai/)：Z.ai 本地 AI Agent（含新版 AutoClaw2，原生多账号）
 - [CodeArts Agent](https://codearts.huaweicloud.com/download.html)：华为云码道代码智能体（多账号登录态管理，无签到）
+- **AStudio**：讯飞 AStudio 桌面端（每日积分自动领取，云端直连免启动）
+- **ZCode**：Z.ai Coding Plan 客户端（国际版 z.ai 与 智谱 BigModel 双通道，多账号备份与一键切换，无签到）
 
 ---
 
@@ -62,10 +68,11 @@ AIGC:
 
 ## 它能做什么
 
-- **自动签到**：打开 Work Pet 即对全部账号静默签到（每日缓存幂等），客户端本体无需运行。
-- **多账号管理**：每个客户端的账号集中展示，一键切换（自动以调试模式重启客户端并登录新账号）。
+- **自动签到**：打开 Work Pet 即对全部账号静默签到（每日缓存幂等），客户端本体无需运行；AStudio 的每日积分弹窗自动领取；ZCode 无签到（仅账号管理）。
+- **WorkBuddy 自动旅行**：成长空间到达自动领取积分、未达每日上限自动再出发（全程云端 API，免启动客户端）；卡片上以紫色徽章显示「旅行中·地点 剩 N 分」与「已到账 +N 积分」。
+- **多账号管理**：每个客户端的账号集中展示，一键切换（自动重启客户端并以新账号生效；ZCode 切换全程约 3 秒，无需手动关闭客户端）。
 - **积分条**：按到期时间归类、段长与积分数量成正比，悬停查看到期日期与剩余天数；最近一次到期醒目高亮。
-- **Token 用量统计**：WorkBuddy / CodeBuddy / AutoClaw 三端扫描本机会话日志，展示今日 / 7日 / 30日 / 累计 Token 用量、会话数与请求数（悬停可见今日请求明细），用量一目了然。数据全部来自本机，不上传。CodeArts Agent 与 TraeWork 因数据存云端/加密库暂不支持。
+- **Token 用量统计**：WorkBuddy / CodeBuddy / AutoClaw 三端扫描本机会话日志，展示今日 / 7日 / 30日 / 累计 Token 用量、会话数与请求数（悬停可见今日请求明细），用量一目了然。数据全部来自本机，不上传。CodeArts Agent、TraeWork、AStudio、ZCode 暂不提供。
 - **设备签到感知**：对按"设备"限额的签到自动轮换账号、按天公平分配，并在面板上一致呈现。
 - **单文件备份/恢复**：各端全部账号导出一个 `WorkPet-accounts-<时间戳>.json`，拷到其他电脑一键恢复。
 - **桌面宠物**：3D 机器人形象（眨眼/天线呼吸/浮动动画），可缩到最小或隐藏到托盘，右键快捷菜单。
@@ -73,7 +80,7 @@ AIGC:
 
 ## 明确不做
 
-本程序**只专注多 AI Agent 平台的签到**（含账号备份、切换与积分展示），其余一概不做，包括但不限于：
+本程序**只专注多 AI Agent 平台的签到与多账号管理**（含账号备份、切换与积分展示），其余一概不做，包括但不限于：
 
 - ❌ 主题、壁纸、毛玻璃等外观定制
 - ❌ 会话迁移、异常续接、暂存/快捷提示词
@@ -86,11 +93,13 @@ AIGC:
 
 | 区域 | 能做什么 |
 | ---- | -------- |
-| **WorkBuddy** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限与成长中心入口；切换 / 删除 / 启动客户端；页顶部 Token 用量行（今日 / 7日 / 累计） |
+| **WorkBuddy** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限、旅行徽章（旅行中 / 已到账）与成长中心入口；切换 / 删除 / 启动客户端；页顶部 Token 用量行（今日 / 7日 / 累计） |
 | **CodeBuddy** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端；页顶部 Token 用量行（今日 / 7日 / 累计） |
 | **TraeWork** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端 |
 | **AutoClaw** | 账号数、已签计数、总积分；账号卡片含积分条、最近过期、Cookie 时限；切换 / 删除 / 启动客户端；页顶部 Token 用量行（今日 / 7日 / 累计） |
 | **CodeArts Agent** | 账号数与 Cookie 时限（登录态有效期）；多账号备份与一键切换（自动重启客户端生效），无需签到 |
+| **AStudio** | 账号数、已签计数、总积分；账号卡片含积分条与 Cookie 时限；切换 / 删除 / 启动客户端（云端直连优先，不启动客户端也可查积分与领取每日积分） |
+| **ZCode** | 账号数与账号标识；多账号备份与一键切换（自动重启客户端生效）；启动客户端；无签到 / 无积分 |
 | **设置** | 随系统启动、字体大小、显示完整手机号、隐藏桌面机器人、各客户端启动开关、账号备份 / 恢复 |
 | **关于** | 版本与项目说明 |
 
@@ -147,10 +156,13 @@ Work Pet 由两部分组成，**不修改、不注入、不重签任何客户端
 | **WorkBuddy** | 纯读本地数据文件 | 纯 HTTP API | 纯 HTTP API | ✅ **全程无感，无需打开** |
 | **CodeBuddy** | 纯读本地数据文件 | 纯 HTTP API | 纯 HTTP API | ✅ **全程无感，无需打开** |
 | **TraeWork** | 纯读本地数据文件（内置 AES 解密） | 纯 HTTP API | 借宿主官方 IPC 秒级签到（抗 9074 拦截） | ⚠️ **仅当天未签到时静默唤醒 1~2 秒，签完即自动退出** |
-| **AutoClaw** | 纯读本地 `auth.json`（本地解密） | 纯 HTTP API | 纯 HTTP API | ✅ **全程无感，无需打开客户端** |
+| **AutoClaw** | 纯读本地 `auth.json`（本地解密）；新版 AutoClaw2 读账号目录（明文） | 旧版：纯 HTTP API；AutoClaw2：经 CDP 读取（需客户端运行） | 旧版：纯 HTTP API；**AutoClaw2 无每日签到** | 旧版 ✅ 无感；AutoClaw2 查积分时需运行 |
 | **CodeArts Agent** | 纯读本地 `state.vscdb`（SQLite + safeStorage 解密） | 无需查询（额度按官方政策自动发放） | 无签到 | ✅ **全程无感；切换账号时会自动重启客户端一次** |
+| **AStudio** | 纯读本地数据文件（明文 JSON） | 官方云端 API（免启动；CDP 兜底） | 每日积分弹窗自动领取（云端直连，免启动） | ✅ **全程无感，无需打开** |
+| **ZCode** | 纯读本地凭据文件（本机自行解密，支持 z.ai 与智谱 BigModel 双通道） | 无积分查询 | 无签到 | ✅ **读取无需打开；切换账号时自动重启客户端一次（全程约 3 秒）** |
 
 - **获取登录态完全无需打开客户端**：Work Pet 对各客户端的本地登录数据进行读取与解密，直接从磁盘解出昵称、头像与 Token，无需启动客户端。
+- **AStudio / ZCode 目前仅在 Windows 上完整支持**：这两个客户端为 Windows 桌面端；macOS 下对应 Tab 的「启动客户端」按钮不可用。
 - **macOS AutoClaw 无法离线读取登录态**：macOS 上 AutoClaw 的安全存储密钥存放在系统钥匙串，密钥派生方式与 Windows DPAPI 不同，且当前环境钥匙串密码与 `auth.json` 不匹配，无法直接解密。因此 macOS 上采用**与 Trae 完全一致**的机制——**自动签到当天，到了签到时刻才临时拉起 AutoClaw，经 CDP 自动签到，签完即刻自动关闭**；若今天已签到过则完全不会启动。若 AutoClaw 账号显示「暂无登录态」，请确保 AutoClaw 已在运行。
 - **启动时 TraeWork 闪开闪关的原因**：Trae 服务端对第三方网络库的直接 HTTP 签到有强风控拦截（返回 `9074 当前参与用户太多`），但官方内核的 IPC 请求可以稳定成功。因此，**仅在账号当天尚未签到时**，WorkPet 会带 `--remote-debugging-port` 静默唤醒 TraeWork 触发签到，**签完即刻自动退出**；若今天已签到过，则完全不会启动它。
 

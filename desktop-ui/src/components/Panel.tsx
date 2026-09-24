@@ -27,6 +27,8 @@ import workbuddyIcon from "@/assets/workbuddy.png";
 import codebuddyIcon from "@/assets/codebuddy.png";
 import autoclawIcon from "@/assets/autoclaw.png";
 import codeartsIcon from "@/assets/codearts.png";
+import astudioIcon from "@/assets/astudio.png";
+import zcodeIcon from "@/assets/zcode.png";
 import rewardQR from "@/assets/buy-me-token.png";
 import type { Account, Entitlement, Status, UpdateInfo } from "@/types";
 import { fmtCredits } from "@/api";
@@ -58,13 +60,15 @@ interface PanelProps {
   updateInfo?: UpdateInfo | null;
 }
 
-type Tab = "tw" | "wb" | "cb" | "ac" | "ca" | "settings" | "about";
+type Tab = "tw" | "wb" | "cb" | "ac" | "ca" | "as" | "zc" | "settings" | "about";
 
 const MAIN_TABS: { key: Tab; label: string; img: string }[] = [
   { key: "wb", label: "WorkBuddy", img: workbuddyIcon },
   { key: "cb", label: "CodeBuddy", img: codebuddyIcon },
   { key: "ac", label: "AutoClaw", img: autoclawIcon },
   { key: "ca", label: "CodeArts", img: codeartsIcon },
+  { key: "as", label: "AStudio", img: astudioIcon },
+  { key: "zc", label: "ZCode", img: zcodeIcon },
   { key: "tw", label: "TraeWork", img: traeworkIcon },
 ];
 const ICON_TABS: { key: Tab; label: string; icon: typeof User }[] = [
@@ -74,13 +78,15 @@ const ICON_TABS: { key: Tab; label: string; icon: typeof User }[] = [
 
 export default function Panel(p: PanelProps) {
   const [tab, setTab] = useState<Tab>("wb");
-  const [tabOrder, setTabOrder] = useState<Tab[]>(["wb", "cb", "ac", "ca", "tw"]);
+  const [tabOrder, setTabOrder] = useState<Tab[]>(["wb", "cb", "ac", "ca", "as", "zc", "tw"]);
   const dragTabRef = useRef<Tab | null>(null);
   const tabWheelLockRef = useRef(0);
   const [fontScale, setFontScale] = useState<number>(1);
   const [cbLaunch, setCbLaunch] = useState<boolean>(false);
   const [acLaunch, setAcLaunch] = useState<boolean>(false);
   const [caLaunch, setCaLaunch] = useState<boolean>(false);
+  const [asLaunch, setAsLaunch] = useState<boolean>(false);
+  const [zcLaunch, setZcLaunch] = useState<boolean>(false);
   const [hidePetState, setHidePetState] = useState<boolean | null>(null);
   const [wbRefreshTick, setWbRefreshTick] = useState(0); // 100% 基准 = 原 115% 渲染大小
   // 标题栏拖动窗口（与宠物卡片拖动同款逻辑）
@@ -106,8 +112,10 @@ export default function Panel(p: PanelProps) {
       setCbLaunch(c.cbLaunchOnStart);
       setAcLaunch(c.acLaunchOnStart);
       setCaLaunch(c.caLaunchOnStart);
+      setAsLaunch(c.asLaunchOnStart);
+      setZcLaunch(c.zcLaunchOnStart);
       setHidePetState(c.hidePet);
-      const known: Tab[] = ["tw", "wb", "cb", "ac", "ca"];
+      const known: Tab[] = ["tw", "wb", "cb", "ac", "ca", "as", "zc"];
       const mapped = (c.tabOrder ?? []).map((t) => (t === "accounts" ? "tw" : t));
       const arr = mapped.filter((t): t is Tab => known.includes(t as Tab));
       const uniq = Array.from(new Set(arr));
@@ -144,7 +152,7 @@ export default function Panel(p: PanelProps) {
     dragTabRef.current = null;
     if (!from || from === target) return;
     setTabOrder((prev) => {
-      const known: Tab[] = ["tw", "wb", "cb", "ac", "ca"];
+      const known: Tab[] = ["tw", "wb", "cb", "ac", "ca", "as", "zc"];
       const head = prev.filter((t) => known.includes(t));
       const arr = head.concat(known.filter((t) => !head.includes(t)));
       const fromIdx = arr.indexOf(from);
@@ -334,6 +342,26 @@ export default function Panel(p: PanelProps) {
               active={tab === "ca"}
             />
           </div>
+          <div className={cn("min-h-0 flex-1 flex-col", tab === "as" ? "flex" : "hidden")}>
+            <WorkBuddyTab
+              showPhone={!!showPhone}
+              kind="as"
+              label="AStudio"
+              refreshTick={wbRefreshTick}
+              active={tab === "as"}
+              onLaunch={(force) => invoke<string>("launch_astudio", { force: force ?? false })}
+            />
+          </div>
+          <div className={cn("min-h-0 flex-1 flex-col", tab === "zc" ? "flex" : "hidden")}>
+            <WorkBuddyTab
+              showPhone={!!showPhone}
+              kind="zc"
+              label="ZCode"
+              refreshTick={wbRefreshTick}
+              active={tab === "zc"}
+              onLaunch={(force) => invoke<string>("launch_zcode", { force: force ?? false })}
+            />
+          </div>
           {tab === "tw" && <AccountsTab p={p} checked={checked} />}
           {tab === "settings" && (
             <SettingsTab
@@ -349,6 +377,10 @@ export default function Panel(p: PanelProps) {
               onAcLaunchChange={setAcLaunch}
               caLaunch={caLaunch}
               onCaLaunchChange={setCaLaunch}
+              asLaunch={asLaunch}
+              onAsLaunchChange={setAsLaunch}
+              zcLaunch={zcLaunch}
+              onZcLaunchChange={setZcLaunch}
               hidePet={p.hidePet}
               hidePetState={hidePetState}
               onHidePetChange={(v) => {
@@ -565,7 +597,7 @@ function BackupRestoreCard({ onRestored }: { onRestored?: () => void }) {
             exportAllAccounts()
               .then((r) => {
                 setMsg(
-                  `已导出 ${r.file}（Trae ${r.counts.traework} / WB ${r.counts.workbuddy} / CB ${r.counts.codebuddy} / AC ${r.counts.autoclaw} / CA ${r.counts.codearts}）`
+                  `已导出 ${r.file}（Trae ${r.counts.traework} / WB ${r.counts.workbuddy} / CB ${r.counts.codebuddy} / AC ${r.counts.autoclaw} / CA ${r.counts.codearts} / AS ${r.counts.astudio}）`
                 );
                 onRestored?.();
               })
@@ -602,7 +634,7 @@ function BackupRestoreCard({ onRestored }: { onRestored?: () => void }) {
               const text = await f.text();
               const data = JSON.parse(text);
               const c = await importBackup(data);
-              setMsg(`已恢复：Trae ${c.traework} / WB ${c.workbuddy} / CB ${c.codebuddy} / AC ${c.autoclaw} / CA ${c.codearts} 个账号`);
+              setMsg(`已恢复：Trae ${c.traework} / WB ${c.workbuddy} / CB ${c.codebuddy} / AC ${c.autoclaw} / CA ${c.codearts} / AS ${c.astudio} 个账号`);
               onRestored?.();
             } catch (err) {
               setMsg(`恢复失败：${String(err).slice(0, 60)}`);
@@ -635,6 +667,10 @@ function SettingsTab({
   onAcLaunchChange,
   caLaunch,
   onCaLaunchChange,
+  asLaunch,
+  onAsLaunchChange,
+  zcLaunch,
+  onZcLaunchChange,
   hidePet,
   hidePetState,
   onHidePetChange,
@@ -652,6 +688,10 @@ function SettingsTab({
   onAcLaunchChange: (v: boolean) => void;
   caLaunch: boolean;
   onCaLaunchChange: (v: boolean) => void;
+  asLaunch: boolean;
+  onAsLaunchChange: (v: boolean) => void;
+  zcLaunch: boolean;
+  onZcLaunchChange: (v: boolean) => void;
   hidePet: boolean;
   hidePetState: boolean | null;
   onHidePetChange: (v: boolean) => void;
@@ -713,6 +753,16 @@ function SettingsTab({
     const next = !caLaunch;
     onCaLaunchChange(next);
     saveConfig({ caLaunchOnStart: next }).catch(() => onCaLaunchChange(!next));
+  };
+  const toggleAsLaunch = () => {
+    const next = !asLaunch;
+    onAsLaunchChange(next);
+    saveConfig({ asLaunchOnStart: next }).catch(() => onAsLaunchChange(!next));
+  };
+  const toggleZcLaunch = () => {
+    const next = !zcLaunch;
+    onZcLaunchChange(next);
+    saveConfig({ zcLaunchOnStart: next }).catch(() => onZcLaunchChange(!next));
   };
 
   const toggleAutoStart = () => {
@@ -871,6 +921,36 @@ function SettingsTab({
         <Switch
           checked={caLaunch}
           onCheckedChange={toggleCaLaunch}
+          className="ml-auto shrink-0"
+        />
+      </div>
+
+      {/* 设置：打开 Pet 时启动 AStudio */}
+      <div className="flex items-center gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
+        <div className="flex min-w-0 flex-col">
+          <span className="text-xs font-medium">打开 Pet 时同时启动 AStudio</span>
+          <span className="text-[10px] text-muted-foreground">
+            以 CDP 调试模式拉起 AStudio（积分与每日积分需要它运行）
+          </span>
+        </div>
+        <Switch
+          checked={asLaunch}
+          onCheckedChange={toggleAsLaunch}
+          className="ml-auto shrink-0"
+        />
+      </div>
+
+      {/* 设置：打开 Pet 时启动 ZCode */}
+      <div className="flex items-center gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
+        <div className="flex min-w-0 flex-col">
+          <span className="text-xs font-medium">打开 Pet 时同时启动 ZCode</span>
+          <span className="text-[10px] text-muted-foreground">
+            无签到，仅多账号备份与一键切换
+          </span>
+        </div>
+        <Switch
+          checked={zcLaunch}
+          onCheckedChange={toggleZcLaunch}
           className="ml-auto shrink-0"
         />
       </div>

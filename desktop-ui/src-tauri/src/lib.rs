@@ -216,6 +216,11 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<String, String> {
     {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         for (env, sub) in [
+            // AutoClaw2（新版：安装目录与 exe 都改名 AutoClaw2）；旧 AutoClaw 路径保留兜底
+            ("LOCALAPPDATA", r"Programs\AutoClaw2\AutoClaw2.exe"),
+            ("ProgramFiles", r"AutoClaw2\AutoClaw2.exe"),
+            ("ProgramFiles(x86)", r"AutoClaw2\AutoClaw2.exe"),
+            ("APPDATA", r"AutoClaw2\AutoClaw2.exe"),
             ("LOCALAPPDATA", r"Programs\AutoClaw\AutoClaw.exe"),
             ("ProgramFiles", r"AutoClaw\AutoClaw.exe"),
             ("ProgramFiles(x86)", r"AutoClaw\AutoClaw.exe"),
@@ -225,8 +230,18 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<String, String> {
                 candidates.push(Path::new(&v).join(sub));
             }
         }
+        candidates.push(PathBuf::from(r"D:\Program Files\AutoClaw2\AutoClaw2.exe"));
         candidates.push(PathBuf::from(r"D:\Program Files\AutoClaw\AutoClaw.exe"));
-        let exe = candidates.into_iter().find(|c| c.is_file()).ok_or("未找到 AutoClaw.exe")?;
+        let exe = candidates
+            .into_iter()
+            .find(|c| c.is_file())
+            .ok_or("未找到 AutoClaw2.exe / AutoClaw.exe")?;
+        // 进程名跟随实际找到的 exe（AutoClaw2.exe / AutoClaw.exe），
+        // 否则 tasklist/taskkill 按旧名匹配不上，会误判「未运行」并杀不掉旧实例
+        let proc_name = exe
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "AutoClaw2.exe".to_string());
 
         let cdp_ok = std::process::Command::new("powershell")
             .args([
@@ -243,29 +258,29 @@ async fn launch_autoclaw(force: Option<bool>) -> Result<String, String> {
         }
 
         let running = std::process::Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq AutoClaw.exe", "/FO", "CSV"])
+            .args(["/FI", &format!("IMAGENAME eq {proc_name}"), "/FO", "CSV"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("AutoClaw.exe"))
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&proc_name))
             .unwrap_or(false);
         if running && !force.unwrap_or(false) {
             return Err("AC_RUNNING_NO_CDP".to_string());
         }
         if running {
             let _ = std::process::Command::new("taskkill")
-                .args(["/IM", "AutoClaw.exe"])
+                .args(["/IM", &proc_name])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output();
             std::thread::sleep(std::time::Duration::from_millis(2500));
             let still = std::process::Command::new("tasklist")
-                .args(["/FI", "IMAGENAME eq AutoClaw.exe", "/FO", "CSV"])
+                .args(["/FI", &format!("IMAGENAME eq {proc_name}"), "/FO", "CSV"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).contains("AutoClaw.exe"))
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains(&proc_name))
                 .unwrap_or(false);
             if still {
                 let _ = std::process::Command::new("taskkill")
-                    .args(["/IM", "AutoClaw.exe", "/F", "/T"])
+                    .args(["/IM", &proc_name, "/F", "/T"])
                     .creation_flags(CREATE_NO_WINDOW)
                     .output();
                 std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -386,6 +401,154 @@ async fn launch_codearts(force: Option<bool>) -> Result<(), String> {
     }
     #[cfg(not(target_os = "windows"))]
     Err("仅支持 Windows".to_string())
+}
+
+/// 以 CDP 调试模式拉起 AStudio（Electron，调试端口 9230）。
+/// AStudio 的账号/积分/每日积分接口都在「本地随机端口 + 渲染进程内存 token」后面，
+/// 只能经 CDP 在渲染进程内调用，因此必须带 --remote-debugging-port 启动。
+/// 返回码：AS_REUSED（已有调试实例）/ AS_LAUNCHED（新拉起）；
+/// 正在运行但没开调试端口 → Err("AS_RUNNING_NO_CDP")，前端二次确认后带 force 重启
+/// （AStudio 有单实例锁，必须先杀干净才能带参数重启）。
+#[tauri::command]
+#[allow(unused_variables)]
+async fn launch_astudio(force: Option<bool>) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(v) = std::env::var("WORKPET_ASTUDIO_BIN") {
+            candidates.push(PathBuf::from(v));
+        }
+        for (env, sub) in [
+            ("ProgramFiles", r"AStudio\AStudio.exe"),
+            ("ProgramFiles(x86)", r"AStudio\AStudio.exe"),
+            ("LOCALAPPDATA", r"Programs\AStudio\AStudio.exe"),
+        ] {
+            if let Ok(v) = std::env::var(env) {
+                candidates.push(Path::new(&v).join(sub));
+            }
+        }
+        candidates.push(PathBuf::from(r"D:\Program Files\AStudio\AStudio.exe"));
+        let exe = candidates.into_iter().find(|c| c.is_file()).ok_or("未找到 AStudio.exe")?;
+
+        // 调试端口已就绪 → 直接复用，不折腾运行中的窗口
+        let cdp_ok = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:9230/json/version).StatusCode -eq 200 } catch { $false }",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("True"))
+            .unwrap_or(false);
+        if cdp_ok {
+            return Ok("AS_REUSED".to_string());
+        }
+
+        let running = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq AStudio.exe", "/FO", "CSV"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("AStudio.exe"))
+            .unwrap_or(false);
+        if running && !force.unwrap_or(false) {
+            return Err("AS_RUNNING_NO_CDP".to_string());
+        }
+        if running {
+            // 优雅关闭（含子进程）→ 复查 → 仍在则强杀进程树；AStudio 退出后还要释放
+            // state.sqlite.lifecycle-lock，daemon 侧 asKillApp 会继续等锁
+            let _ = std::process::Command::new("taskkill")
+                .args(["/IM", "AStudio.exe", "/T"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            let still = std::process::Command::new("tasklist")
+                .args(["/FI", "IMAGENAME eq AStudio.exe", "/FO", "CSV"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("AStudio.exe"))
+                .unwrap_or(false);
+            if still {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/IM", "AStudio.exe", "/F", "/T"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+            }
+        }
+        std::process::Command::new(&exe)
+            .arg("--remote-debugging-port=9230")
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("启动 AStudio 失败: {e}"))?;
+        Ok("AS_LAUNCHED".to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    Err("AStudio 仅支持 Windows".to_string())
+}
+
+/// 拉起 ZCode（Z.ai Coding Plan 桌面端；无签到，仅多账号切换用）。
+/// 不需要调试端口，正常启动即可；切换账号后由 daemon 写回凭据，这里负责重启。
+/// 返回码：ZC_REUSED（已在运行）/ ZC_LAUNCHED（新拉起或已重启）。
+#[tauri::command]
+#[allow(unused_variables)]
+async fn launch_zcode(force: Option<bool>) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Ok(v) = std::env::var("WORKPET_ZCODE_BIN") {
+            candidates.push(PathBuf::from(v));
+        }
+        for (env, sub) in [
+            ("ProgramFiles", r"zcode\ZCode.exe"),
+            ("LOCALAPPDATA", r"Programs\ZCode\ZCode.exe"),
+            ("LOCALAPPDATA", r"Programs\ZCode Preview\ZCode Preview.exe"),
+        ] {
+            if let Ok(v) = std::env::var(env) {
+                candidates.push(Path::new(&v).join(sub));
+            }
+        }
+        candidates.push(PathBuf::from(r"D:\Program Files\zcode\ZCode.exe"));
+        let exe = candidates.into_iter().find(|c| c.is_file()).ok_or("未找到 ZCode.exe")?;
+
+        let running = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq ZCode.exe", "/FO", "CSV"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("ZCode.exe"))
+            .unwrap_or(false);
+        if running && !force.unwrap_or(false) {
+            return Ok("ZC_REUSED".to_string());
+        }
+        if running {
+            // 优雅关闭（含子进程）→ 复查 → 仍在则强杀进程树
+            let _ = std::process::Command::new("taskkill")
+                .args(["/IM", "ZCode.exe", "/T"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+            let still = std::process::Command::new("tasklist")
+                .args(["/FI", "IMAGENAME eq ZCode.exe", "/FO", "CSV"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("ZCode.exe"))
+                .unwrap_or(false);
+            if still {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/IM", "ZCode.exe", "/F", "/T"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+            }
+        }
+        std::process::Command::new(&exe)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("启动 ZCode 失败: {e}"))?;
+        Ok("ZC_LAUNCHED".to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    Err("ZCode 仅支持 Windows".to_string())
 }
 
 /// 查询 daemon 自举是否完成（前端启动时轮询，避免错过一次性事件）。
@@ -901,6 +1064,8 @@ pub fn run() {
             launch_codebuddy_cli,
             launch_autoclaw,
             launch_codearts,
+            launch_astudio,
+            launch_zcode,
             daemon_ready,
             set_panel_open,
             set_window_visible,

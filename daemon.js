@@ -29,7 +29,7 @@ const { spawn, execFileSync } = require('child_process');
 const isMac = process.platform === 'darwin';
 
 const APP_BRAND = 'TraeWork';
-const DAEMON_VERSION = '1.0.3';
+const DAEMON_VERSION = '1.0.5';
 const APP_VERSION = DAEMON_VERSION;
 const HOST = '127.0.0.1';
 
@@ -107,19 +107,24 @@ function wbExtractUsage(rec) {
       total: Number(oc.totalTokens || input + output),
     };
   }
-  // WorkBuddy / CodeBuddy 格式：providerData.rawUsage/usage 或顶层 usage（OpenAI 风格字段）
+  // WorkBuddy / CodeBuddy 格式：providerData.rawUsage/usage 或顶层 usage。
+  // 新格式（CodeBuddy CLI / WorkBuddy 5.6+）：rawUsage 为 OpenAI 风格 snake_case；
+  // providerData.usage 为聚合驼峰（inputTokens/outputTokens/totalTokens）——
+  // 两键可能同时存在，rawUsage 优先、每记录只取一份，避免重复计数。
   const pd = rec.providerData;
   const u = (pd && (pd.rawUsage || pd.usage)) || rec.usage;
   if (!u || typeof u !== 'object') return null;
-  const input = Number(u.prompt_tokens || 0);
-  const output = Number(u.completion_tokens || 0);
+  const input = Number(u.prompt_tokens ?? u.inputTokens ?? 0);
+  const output = Number(u.completion_tokens ?? u.outputTokens ?? 0);
   if (!input && !output) return null;
   const cached = Number(
     u.prompt_cache_hit_tokens ??
     (u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) ??
-    u.cache_read_input_tokens ?? 0
+    u.cache_read_input_tokens ??
+    (Array.isArray(u.inputTokensDetails) && u.inputTokensDetails[0] && u.inputTokensDetails[0].cached_tokens) ??
+    0
   );
-  return { input, output, cached, total: Number(u.total_tokens || input + output) };
+  return { input, output, cached, total: Number(u.total_tokens ?? u.totalTokens ?? input + output) };
 }
 
 function scanClientTokenUsage(kind) {
@@ -456,6 +461,8 @@ function loadStore() {
     codebuddy: Object.assign({ current: null, accounts: [] }, st.codebuddy),
     ac: Object.assign({ current: null, accounts: [] }, st.ac),
     codearts: Object.assign({ current: null, accounts: [] }, st.codearts),
+    as: Object.assign({ current: null, accounts: [] }, st.as),
+    zc: Object.assign({ current: null, accounts: [] }, st.zc),
   };
 }
 function saveStore(store) {
@@ -749,14 +756,16 @@ async function checkinRequest(action, auth) {
 // ---------------- 设置（持久化到数据目录 config.json） ----------------
 const CONFIG_DIR = DATA_ROOT;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: isMac, caLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'ca', 'tw'], tabShowText: false, hidePet: true };
-// 旧配置兼容：TraeWork Tab 的 key 原为 'accounts'，v1.0.2 起统一为 'tw'
+const SETTING_DEFAULTS = { launchHostOnStart: false, wbLaunchOnStart: false, cbLaunchOnStart: false, acLaunchOnStart: isMac, caLaunchOnStart: false, asLaunchOnStart: false, zcLaunchOnStart: false, showPhone: false, fontScale: 1, tabOrder: ['wb', 'cb', 'ac', 'ca', 'as', 'zc', 'tw'], tabShowText: false, hidePet: true };
+// 旧配置兼容：TraeWork Tab 的 key 原为 'accounts'，v1.0.2 起统一为 'tw'。
+// 新增客户端（如 as）后，老配置里缺失的 Tab 追加到末尾而不是整表重置，避免用户自定义顺序被清掉。
 function normalizeTabOrder(v) {
   if (!Array.isArray(v)) return null;
   const mapped = v.map((t) => (t === 'accounts' ? 'tw' : String(t)));
-  const known = ['wb', 'cb', 'ac', 'ca', 'tw'];
+  const known = ['wb', 'cb', 'ac', 'ca', 'as', 'zc', 'tw'];
   const uniq = Array.from(new Set(mapped)).filter((t) => known.includes(t));
-  return uniq.length === known.length ? uniq : null;
+  for (const k of known) if (!uniq.includes(k)) uniq.push(k);
+  return uniq;
 }
 function loadSettings() {
   try {
@@ -962,6 +971,18 @@ function collectExportAccounts() {
       current: (store.codearts && store.codearts.current) || null, // 保持已有 current，不因导出而清空
       accounts: (store.codearts && store.codearts.accounts) || [],
     },
+    astudio: (() => {
+      // AStudio：导出前先把本机最新登录态（明文 session）并入账号库，保证 WorkPet-accounts.json 完整
+      try { if (asReadSession()) clientSyncStore('as'); } catch (_) {}
+      const s2 = loadStore();
+      return { current: (s2.as && s2.as.current) || null, accounts: (s2.as && s2.as.accounts) || [] };
+    })(),
+    zcode: (() => {
+      // ZCode：先把本机最新凭据文件并入账号库，保证 WorkPet-accounts.json 完整
+      try { zcSyncStore(); } catch (_) {}
+      const s2 = loadStore();
+      return { current: (s2.zc && s2.zc.current) || null, accounts: (s2.zc && s2.zc.accounts) || [] };
+    })(),
   };
   // 把引擎目录的最新账号状态同步回单文件账号库，保证 WorkPet-accounts.json 始终完整
   store.traework.currentSecret = out.traework.currentSecret;
@@ -970,6 +991,8 @@ function collectExportAccounts() {
   store.codebuddy = { current: out.codebuddy.current, accounts: out.codebuddy.accounts };
   store.ac = { current: out.autoclaw.current, accounts: out.autoclaw.accounts };
   store.codearts = { current: out.codearts.current, accounts: out.codearts.accounts };
+  store.as = { current: out.astudio.current, accounts: out.astudio.accounts };
+  store.zc = { current: out.zcode.current, accounts: out.zcode.accounts };
   saveStore(store);
   return out;
 }
@@ -994,6 +1017,8 @@ function exportBackupFile() {
       codebuddy: data.codebuddy.accounts.length,
       autoclaw: (data.autoclaw.accounts || []).length,
       codearts: (data.codearts.accounts || []).length,
+      astudio: (data.astudio.accounts || []).length,
+      zcode: (data.zcode.accounts || []).length,
     },
   };
 }
@@ -1009,7 +1034,7 @@ function listBackupFiles() {
 
 async function restoreBackupData(data) {
   if (!data || data.app !== 'WorkPet') throw new Error('不是有效的 WorkPet 备份文件');
-  const counts = { traework: 0, workbuddy: 0, codebuddy: 0, autoclaw: 0, codearts: 0 };
+  const counts = { traework: 0, workbuddy: 0, codebuddy: 0, autoclaw: 0, codearts: 0, astudio: 0, zcode: 0 };
   const atomicWrite = (file, content) => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = file + '.tmp';
@@ -1078,6 +1103,30 @@ async function restoreBackupData(data) {
       counts.codearts = (counts.codearts || 0) + 1;
     }
   }
+  // AStudio：仅并入账号库（不自动写回本机 astron-session.json —— 登录态是明文，
+  // 跨机导入后可直接切换；是否切换由用户点按钮决定）
+  if (data.astudio) {
+    for (const a of data.astudio.accounts || []) {
+      const uid = a && a.uid;
+      if (!uid || !a.session) continue;
+      const idx = store.as.accounts.findIndex((x) => x && String(x.uid) === String(uid));
+      if (idx >= 0) store.as.accounts[idx] = Object.assign({}, store.as.accounts[idx], a, { backedUpAt: Date.now() });
+      else store.as.accounts.push(Object.assign({ backedUpAt: Date.now() }, a));
+      counts.astudio = (counts.astudio || 0) + 1;
+    }
+  }
+  // ZCode：仅并入账号库（不回写 credentials.json —— 凭据用本机派生 key 加密，
+  // 跨机恢复的备份无法在本机解密，切换时会自检拒绝；是否切换由用户点按钮决定）
+  if (data.zcode) {
+    for (const a of data.zcode.accounts || []) {
+      const uid = a && a.uid;
+      if (!uid || !a.cred) continue;
+      const idx = store.zc.accounts.findIndex((x) => x && String(x.uid) === String(uid));
+      if (idx >= 0) store.zc.accounts[idx] = Object.assign({}, store.zc.accounts[idx], a, { backedUpAt: Date.now() });
+      else store.zc.accounts.push(Object.assign({ backedUpAt: Date.now() }, a));
+      counts.zcode = (counts.zcode || 0) + 1;
+    }
+  }
   saveStore(store);
   return counts;
 }
@@ -1105,6 +1154,162 @@ const AC_DATA_DIR = isMac
   : path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'autoclaw');
 const AC_AUTH_FILE = path.join(AC_DATA_DIR, 'auth.json');
 const AC_LOCAL_STATE = path.join(AC_DATA_DIR, 'Local State');
+
+// ---------------- AutoClaw2（zwork v2，智谱）：全新数据布局 ----------------
+// 数据目录迁移到 %APPDATA%/AutoClaw-official；账号改为原生多账号：
+//   accounts/<accountKey>/account-profile.json（明文：accountId/phone/numericUserId/lastLoginAt）
+//   accounts/<accountKey>/account-credentials.enc（safeStorage v10，密钥为 app-bound 加密，
+//     普通 DPAPI 解不开 —— 实测 "The data is invalid"，因此 token 外部拿不到）
+// 当前账号 = device/active-product-account.json 的 accountKey 指针。
+// 积分/会员只能经 CDP 调渲染进程的 window.zworkAuth（getCreditsBalance/getCreditsLedgers）；
+// 新版无每日签到（账本里的「每日签到」是历史记录，zworkAuth 无签到方法）。
+const AC2_DATA_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'AutoClaw-official');
+const AC2_ACCOUNTS_DIR = path.join(AC2_DATA_DIR, 'accounts');
+const AC2_ACTIVE_FILE = path.join(AC2_DATA_DIR, 'device', 'active-product-account.json');
+
+/** 是否为新版布局（AutoClaw-official/accounts 存在且非空） */
+function ac2IsNewLayout() {
+  try {
+    return fs.existsSync(AC2_ACCOUNTS_DIR) && fs.readdirSync(AC2_ACCOUNTS_DIR).length > 0;
+  } catch (_) { return false; }
+}
+
+/** 当前账号指针（accountKey = accounts/ 下的目录名） */
+function ac2ReadActiveKey() {
+  const j = readJsonOrNull(AC2_ACTIVE_FILE);
+  return j && j.accountKey ? String(j.accountKey) : null;
+}
+
+/** 全部账号 profile（明文；含 accountKey 便于定位目录） */
+function ac2ReadProfiles() {
+  const out = [];
+  try {
+    for (const key of fs.readdirSync(AC2_ACCOUNTS_DIR)) {
+      const p = readJsonOrNull(path.join(AC2_ACCOUNTS_DIR, key, 'account-profile.json'));
+      if (p && p.profile && p.profile.accountId) out.push(Object.assign({ accountKey: key }, p.profile));
+    }
+  } catch (_) {}
+  return out;
+}
+
+/** AutoClaw2 渲染进程 eval（页面 = zwork.html；window.zworkAuth 提供积分/会员 API） */
+async function ac2CdpEval(jsExpr) {
+  let list;
+  try {
+    const r = await fetch('http://127.0.0.1:' + CLIENT_PROFILES.ac.cdpPort + '/json/list', { signal: AbortSignal.timeout(1500) });
+    list = await r.json();
+  } catch (_) { return null; } // 未运行 / 未开调试端口
+  const pages = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+  const page = pages.find((t) => /zwork|autoclaw/i.test(String(t.url || '') + ' ' + String(t.title || '')));
+  if (!page) return null;
+  return cdpEvalOnWs(page.webSocketDebuggerUrl, jsExpr, 15000);
+}
+
+/** AutoClaw2 积分：余额 + 账本（含每笔过期时间）→ segments。
+ *  账本 income（amount>0 且未过期）按过期时间升序构成积分包；
+ *  消耗不按包摊销，差额并入最后一段，保证总额与 UI 一致。 */
+/** AutoClaw2 账号列表：accounts/<key>/account-profile.json 全量（明文，免启动）；
+ *  当前账号 = 指针指向的那个，排最前。AutoClaw2 无每日签到 → checkin 恒为 null。 */
+function ac2ListAccounts() {
+  const activeKey = ac2ReadActiveKey();
+  const profiles = ac2ReadProfiles();
+  const active = profiles.find((p) => p.accountKey === activeKey) || null;
+  const currentUid = active ? String(active.accountId) : null;
+  const sorted = profiles.slice().sort((a, b) => {
+    const an = a.accountKey === activeKey ? -1 : 0;
+    const bn = b.accountKey === activeKey ? -1 : 0;
+    return (an - bn) || (Number(b.lastLoginAt || 0) - Number(a.lastLoginAt || 0));
+  });
+  return {
+    currentUid,
+    accounts: sorted.map((p) => ({
+      uid: String(p.accountId),
+      nickname: p.displayName || p.phone || String(p.numericUserId || ''),
+      phone: p.phone || '',
+      uin: p.numericUserId != null ? String(p.numericUserId) : '',
+      loginMethod: '',
+      tokenExpiresAt: null,
+      refreshExpiresAt: null,
+      lastRefreshTime: p.lastLoginAt ? p.lastLoginAt * 1000 : null,
+      checkin: null,
+    })),
+  };
+}
+
+/** AutoClaw2 主进程是否在运行（tasklist 按新 exe 名） */
+function ac2IsRunning() {
+  if (isMac) return false;
+  try {
+    const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq AutoClaw2.exe', '/FO', 'CSV', '/NH'],
+      { encoding: 'utf8', windowsHide: true });
+    return out.includes('AutoClaw2.exe');
+  } catch (_) { return false; }
+}
+
+/** AutoClaw2 切换账号：改 active-product-account.json 指针 + 重启客户端。
+ *  凭据由 AutoClaw2 自己解密载入（app-bound，外部解不开），WorkPet 只翻指针。 */
+async function ac2SwitchToAccount(uid) {
+  const profiles = ac2ReadProfiles();
+  const target = profiles.find((p) => String(p.accountId) === String(uid));
+  if (!target) throw new Error('AutoClaw2 账号不存在');
+  const activeKey = ac2ReadActiveKey();
+  if (activeKey === target.accountKey) {
+    return { uid, nickname: target.displayName || target.phone || uid, alreadyCurrent: true };
+  }
+  fs.mkdirSync(path.dirname(AC2_ACTIVE_FILE), { recursive: true });
+  const tmp = AC2_ACTIVE_FILE + '.workpet-tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ schemaVersion: 1, accountKey: target.accountKey }, null, 2));
+  fs.renameSync(tmp, AC2_ACTIVE_FILE);
+  log('[client:ac] 已切换活跃账号指针 -> ' + target.accountKey.slice(0, 12) + '…');
+  let relaunched = false;
+  if (ac2IsRunning()) {
+    killAutoClaw(); // 新旧 exe 名都会尝试
+    for (let i = 0; i < 10 && ac2IsRunning(); i++) await sleep(500);
+    try { const r = await acLaunchBinary(); relaunched = (r === 'launched' || r === 'reuse'); } catch (_) {}
+    log('[client:ac] 切换前客户端在运行，已自动重启' + (relaunched ? '' : '（重启失败）'));
+  }
+  return { uid, nickname: target.displayName || target.phone || uid, relaunched };
+}
+
+/** AutoClaw2 积分：CDP 渲染进程 zworkAuth（余额 + 账本 → 含过期的 segments） */
+async function ac2FetchCreditsViaCdp() {
+  const expr = `(async () => {
+    const a = window.zworkAuth;
+    if (!a || typeof a.getCreditsBalance !== 'function') return { error: 'no-zworkAuth' };
+    const balance = await a.getCreditsBalance();
+    let ledgers = null;
+    try { ledgers = await a.getCreditsLedgers({ flowDirection: 'all' }); } catch (e) { ledgers = null; }
+    return { balance, ledgers };
+  })()`;
+  const r = await ac2CdpEval(expr);
+  if (!r) throw new Error('AutoClaw2 未运行或未开启调试端口（请先点「启动 AutoClaw」）');
+  if (r.error) throw new Error('AutoClaw2 渲染进程读取失败: ' + r.error);
+  return ac2Segments(r.balance, r.ledgers);
+}
+
+function ac2Segments(balance, ledgers) {
+  const total = Number((balance && balance.totalPoints) || 0);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const entries = (ledgers && ledgers.entries) || [];
+  const seg = [];
+  for (const e of entries) {
+    const amt = Number(e.amount || 0);
+    const exp = Number(e.expiresAt || 0);
+    if (amt > 0 && exp > nowSec) seg.push({ remaining: amt, total: amt, expiresAt: exp * 1000, source: e.description || '积分' });
+  }
+  seg.sort((a, b) => (a.expiresAt || 0) - (b.expiresAt || 0));
+  const visible = seg.reduce((s, x) => s + x.remaining, 0);
+  if (total > visible + 0.01) {
+    if (seg.length) {
+      seg[seg.length - 1].remaining += total - visible;
+      seg[seg.length - 1].total += total - visible;
+    } else {
+      seg.push({ remaining: total, total, expiresAt: null, source: '积分' });
+    }
+  }
+  if (!seg.length && total > 0) seg.push({ remaining: total, total, expiresAt: null, source: '积分' });
+  return { credits: total, segments: seg, count: seg.length };
+}
 const AC_API_HOST = 'https://autoglm-acceleration-api.zhipuai.cn';
 const AC_APP_ID = '100003';
 const AC_APP_KEY = '38d2391985e2369a5fb8227d8e6cd5e5';
@@ -1174,6 +1379,804 @@ const CA_EXE_CANDIDATES = (process.env.WORKPET_CODEARTS_BIN ? [process.env.WORKP
   path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'CodeArts Agent', CA_IDE_EXE),
 ]);
 
+// ---------------- AStudio（AStudio 桌面端，Electron，独立账号体系） ----------------
+// 登录态 = <数据目录>/userdata/astron-session.json（纯明文 JSON：accountId/uid/token/
+//   ssoSessionId/banned/modelBearerToken/loginMethod/loggedInAt/nickname/mobile）。
+// 业务数据 = AStudio 本地 HTTP 服务（端口每次启动随机，记在 userdata/server-runtime.json），
+//   鉴权 token 只存在于渲染进程内存，由 window.desktopBridge.getWsUrl() 暴露
+//   （形如 ws://127.0.0.1:<port>/?token=<localToken>），因此一律经 CDP 在渲染进程内 fetch
+//   —— 与 wb 经 CDP 取明文 token 是同一思路，且完全不触碰 app.asar。
+// 签到 = 推广弹窗系统：GET /api/astron-client-popups/pending，命中
+//   componentType==='DAILY_REWARD_DIALOG' 且 popupId 为正整数后
+//   POST /api/astron-client-popups/complete {popupId, instanceKey}
+//   （注意：/claim 是一次性「客户端下载奖励」claimAstronClientDownloadReward，不是每日积分；
+//     另需过滤 popupId 为负、instanceKey==='DEV_PREVIEW' 的客户端预览夹具）
+// 切换 = 停客户端（并等 state.sqlite.lifecycle-lock 释放）→ 写 astron-session.json →
+//   同步所有 config.toml 的 [model_providers.astron-spark]（experimental_bearer_token + uid）
+//   → 原样带 CDP 重启。与官方 persistAstronAuthState 的落盘路径一致。
+const AS_DATA_DIR_NAME = 'AStudio Data';
+const AS_EXE_NAME = 'AStudio.exe';
+const AS_CDP_PORT = 9230; // 必须与 CLIENT_PROFILES.as.cdpPort 一致
+const AS_PROVIDER_SECTION = '[model_providers.astron-spark]';
+const AS_PROVIDER_NAME = 'Astron Spark';
+const AS_PROVIDER_TOKEN_KEY = 'experimental_bearer_token';
+const AS_PROVIDER_UID_KEY = 'uid';
+
+/** Windows 常见安装根目录（多盘符/多 Program Files 并列搜索）：
+ *  环境变量优先（Program Files → x86 → ProgramW6432 → LOCALAPPDATA\Programs → LOCALAPPDATA），
+ *  最后兜底常见字面路径（部分机器装在 D 盘且未改环境变量）。不与任何单一绝对路径绑定。 */
+function winProgramRoots() {
+  const out = [];
+  const add = (p) => { if (p && !out.includes(p)) out.push(p); };
+  add(process.env.ProgramFiles);
+  add(process.env['ProgramFiles(x86)']);
+  add(process.env.ProgramW6432);
+  const lad = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  add(path.join(lad, 'Programs'));
+  add(lad);
+  add('C:/Program Files');
+  add('C:/Program Files (x86)');
+  add('D:/Program Files');
+  return out;
+}
+
+const AS_EXE_CANDIDATES = (process.env.WORKPET_ASTUDIO_BIN ? [process.env.WORKPET_ASTUDIO_BIN] : []).concat(isMac ? [
+  '/Applications/AStudio.app/Contents/MacOS/AStudio',
+] : winProgramRoots().map((root) => path.join(root, 'AStudio', AS_EXE_NAME)));
+
+function detectAstudioExe() {
+  for (const p of AS_EXE_CANDIDATES) {
+    try { if (fs.existsSync(p) && fs.statSync(p).isFile()) return p; } catch (_) {}
+  }
+  return null;
+}
+
+/** 便携数据目录：与安装目录同级的「AStudio Data」（安装到哪就在其上级目录旁）。
+ *  多根搜索：env 覆盖 → 安装位置同级 → 各常见 Program Files / 用户目录（含 x86 与 LOCALAPPDATA\Programs）。
+ *  用 3 个标记文件判定；装在任何盘符/目录都能找到，找不到返回 null。 */
+function detectAstudioDataDir() {
+  const env = process.env.WORKPET_ASTUDIO_DIR;
+  if (env && fs.existsSync(env)) return env;
+  const cands = [];
+  // 1) 由检测到的安装位置推导（覆盖自定义安装目录，如 D:\Apps\AStudio\）
+  const exe = detectAstudioExe();
+  if (exe) cands.push(path.join(path.dirname(path.dirname(exe)), AS_DATA_DIR_NAME));
+  // 2) 多根目录并列搜索（C/D 盘 Program Files、x86、LOCALAPPDATA 及其 Programs 都在列）
+  for (const root of winProgramRoots()) cands.push(path.join(root, AS_DATA_DIR_NAME));
+  for (const d of cands) {
+    try {
+      if (fs.existsSync(path.join(d, 'userdata', 'astron-session.json'))
+        || fs.existsSync(path.join(d, 'acode-home-overlay', 'config.toml'))
+        || fs.existsSync(path.join(d, 'userdata', 'state.sqlite'))) return d;
+    } catch (_) {}
+  }
+  return env || null; // 未安装 AStudio：as 全部能力安全降级为空
+}
+
+const AS_DATA_DIR = detectAstudioDataDir();
+const AS_SESSION_FILE = AS_DATA_DIR ? path.join(AS_DATA_DIR, 'userdata', 'astron-session.json') : null;
+const AS_LOCK_FILE = AS_DATA_DIR ? path.join(AS_DATA_DIR, 'userdata', 'state.sqlite.lifecycle-lock', 'owner.json') : null;
+// config.toml 有两份（acode-home-overlay 与内核 runtime/acode-home），都含同一段 model_providers
+const AS_CONFIG_FILES = AS_DATA_DIR ? [
+  path.join(AS_DATA_DIR, 'acode-home-overlay', 'config.toml'),
+  path.join(AS_DATA_DIR, 'runtime', 'acode-home', 'config.toml'),
+].filter((p) => { try { return fs.existsSync(p); } catch (_) { return false; } }) : [];
+let asSwitching = false; // 切换过程中挂起 watcher 同步，避免读到中间态
+
+/** 读取 astron-session.json（纯明文；缺失/损坏返回 null） */
+function asReadSession() {
+  if (!AS_SESSION_FILE) return null;
+  const raw = readJsonOrNull(AS_SESSION_FILE);
+  return raw && raw.uid ? raw : null;
+}
+
+/** 原子写回登录态（与官方一致写整个 session 对象） */
+function asWriteSession(session) {
+  if (!AS_SESSION_FILE) throw new Error('未找到 AStudio 数据目录（请先安装并登录一次）');
+  fs.mkdirSync(path.dirname(AS_SESSION_FILE), { recursive: true });
+  const tmp = AS_SESSION_FILE + '.workpet-tmp';
+  fs.writeFileSync(tmp, JSON.stringify(session, null, 2));
+  fs.renameSync(tmp, AS_SESSION_FILE);
+}
+
+/** config.toml 的 [model_providers.astron-spark] 段手术（无 TOML 库，纯字符串处理）。
+ *  行为对齐官方 updateAcodeToken：定位段头 → 只在段内替换两个键 → 缺失则插到段尾 →
+ *  整段缺失则创建；值一律 JSON.stringify 加双引号。 */
+function asPatchProviderConfig(text, token, uid) {
+  const lines = String(text || '').split('\n');
+  const q = (v) => JSON.stringify(String(v));
+  const tokenRe = new RegExp('^\\s*' + AS_PROVIDER_TOKEN_KEY + '\\s*=');
+  const uidRe = new RegExp('^\\s*' + AS_PROVIDER_UID_KEY + '\\s*=');
+  const head = lines.findIndex((l) => l.trim() === AS_PROVIDER_SECTION);
+  if (head < 0) {
+    if (!token && !uid) return text;
+    if (lines.length && lines[lines.length - 1].trim()) lines.push('');
+    lines.push(AS_PROVIDER_SECTION, 'name = ' + q(AS_PROVIDER_NAME));
+    if (token) lines.push(AS_PROVIDER_TOKEN_KEY + ' = ' + q(token));
+    if (uid) lines.push(AS_PROVIDER_UID_KEY + ' = ' + q(uid));
+    lines.push('');
+    return lines.join('\n');
+  }
+  let end = lines.length;
+  for (let i = head + 1; i < lines.length; i++) {
+    if (/^\s*\[/.test(lines[i])) { end = i; break; }
+  }
+  const apply = (re, key, val) => {
+    if (!val) return;
+    const i = lines.findIndex((l, idx) => idx > head && idx < end && re.test(l));
+    if (i >= 0) lines[i] = key + ' = ' + q(val);
+    else { lines.splice(end, 0, key + ' = ' + q(val)); end++; }
+  };
+  apply(tokenRe, AS_PROVIDER_TOKEN_KEY, token);
+  apply(uidRe, AS_PROVIDER_UID_KEY, uid);
+  return lines.join('\n');
+}
+
+/** 把 uid/modelBearerToken 同步进所有 config.toml；返回改动的文件数 */
+function asWriteProviderConfig(uid, modelBearerToken) {
+  let changed = 0;
+  for (const file of AS_CONFIG_FILES) {
+    try {
+      const prev = fs.readFileSync(file, 'utf8');
+      const next = asPatchProviderConfig(prev, modelBearerToken, uid);
+      if (next !== prev) {
+        const tmp = file + '.workpet-tmp';
+        fs.writeFileSync(tmp, next);
+        fs.renameSync(tmp, file);
+        changed++;
+      }
+    } catch (e) { log('[client:as] 写 config.toml 失败 ' + file + ': ' + e.message); }
+  }
+  return changed;
+}
+
+// ---------------- AStudio 云端直连（无需启动 AStudio） ----------------
+// 逆向自 AStudio 3.4.1（app.asar astronAccountGateway / buildAstronCookieHeader），
+// 并已实测：agent.xfyun.cn/xingchen-studio/* 接受「Cookie + clientType + studioVersion」。
+// 鉴权四件套全部来自明文 astron-session.json，因此积分查询与每日积分签到都可以免启动。
+const AS_CLOUD_BASE = 'https://agent.xfyun.cn';
+const AS_CLIENT_TYPE = isMac ? '22' : '21'; // resolveAstronStudioClientType: win32=21 / darwin=22
+
+let asAppVersionCache = null;
+function asResolveAppVersion() {
+  if (asAppVersionCache) return asAppVersionCache;
+  try {
+    const exe = detectAstudioExe();
+    if (exe) {
+      const v = fs.readFileSync(path.join(path.dirname(exe), 'version'), 'utf8').trim();
+      if (v) { asAppVersionCache = v.split('-', 1)[0] || v; return asAppVersionCache; }
+    }
+  } catch (_) {}
+  asAppVersionCache = '3.4.1'; // 兜底：读不到安装目录 version 文件时用已知近期版本
+  return asAppVersionCache;
+}
+
+function asCloudHeaders(session) {
+  return {
+    accept: 'application/json',
+    cookie: [
+      session.ssoSessionId ? `ssoSessionId=${session.ssoSessionId}` : null,
+      session.ssoSessionId ? `sso_sessionid=${session.ssoSessionId}` : null,
+      `account_id=${session.accountId}`,
+      `token=${session.token}`,
+    ].filter(Boolean).join('; '),
+    clienttype: AS_CLIENT_TYPE,
+    studioversion: asResolveAppVersion(),
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) AStudio/3.4.1 Chrome/144.0.7559.236 Electron/40.10.6 Safari/537.36',
+  };
+}
+
+/** 云端请求（不经 AStudio 本地服务）：返回 envelope.data；业务失败抛错。
+ *  响应契约：{flag:true, code:0, data} = 成功；flag=false 时 desc 为可读错误。 */
+async function asCloudRequest(pathName, init) {
+  const session = asReadSession();
+  if (!session || !session.uid || !session.ssoSessionId) {
+    throw new Error('AStudio 未登录或登录态不完整（astron-session.json）');
+  }
+  const qs = 'ssoSessionId=' + encodeURIComponent(String(session.ssoSessionId))
+    + '&account_id=' + encodeURIComponent(String(session.accountId || session.uid));
+  const r = await fetch(AS_CLOUD_BASE + pathName + '?' + qs, Object.assign({
+    headers: asCloudHeaders(session),
+    signal: AbortSignal.timeout(10000),
+  }, init || {}));
+  const raw = await r.text();
+  let env;
+  try { env = JSON.parse(raw); } catch (_) { throw new Error('云端响应解析失败 (HTTP ' + r.status + '): ' + raw.slice(0, 100)); }
+  if (!r.ok || !env || env.flag !== true || env.code !== 0) {
+    const desc = String((env && env.desc) || raw.slice(0, 80) || ('HTTP ' + r.status));
+    if (r.status === 401 || /失效|过期|重新登录|未登录|signed/i.test(desc)) {
+      throw new Error('AStudio 登录态已失效，请打开 AStudio 重新登录');
+    }
+    throw new Error('云端接口失败: ' + desc);
+  }
+  return env.data;
+}
+
+/** AStudio 主进程是否在运行 */
+function asIsRunning() {
+  if (isMac) return false;
+  try {
+    const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq ' + AS_EXE_NAME, '/FO', 'CSV', '/NH'],
+      { encoding: 'utf8', windowsHide: true });
+    return out.includes(AS_EXE_NAME);
+  } catch (_) { return false; }
+}
+
+/** 单实例锁是否仍被持有（owner.json 里的 pid 还活着）——AStudio 启动时会检查该锁 */
+function asLockHeld() {
+  if (!AS_LOCK_FILE) return false;
+  const o = readJsonOrNull(AS_LOCK_FILE);
+  if (!o || !o.pid) return false;
+  const pid = Number(o.pid);
+  if (!pid) return false;
+  try {
+    if (process.platform === 'win32') {
+      const out = execFileSync('tasklist', ['/FI', 'PID eq ' + pid, '/FO', 'CSV', '/NH'],
+        { encoding: 'utf8', windowsHide: true });
+      return new RegExp('\\b' + pid + '\\b').test(out);
+    }
+    process.kill(pid, 0);
+    return true;
+  } catch (_) { return false; }
+}
+
+/** 停 AStudio：先优雅关（/T），等不到再强杀，最后等单实例锁释放 */
+async function asKillApp() {
+  if (isMac || !detectAstudioExe()) return;
+  try { execFileSync('taskkill', ['/IM', AS_EXE_NAME, '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+  for (let i = 0; i < 8 && asIsRunning(); i++) await sleep(1000);
+  if (asIsRunning()) {
+    try { execFileSync('taskkill', ['/IM', AS_EXE_NAME, '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+    for (let i = 0; i < 4 && asIsRunning(); i++) await sleep(500);
+  }
+  for (let i = 0; i < 16 && asLockHeld(); i++) await sleep(500);
+  if (asLockHeld()) log('[client:as] 警告：lifecycle-lock 仍未释放，AStudio 可能拒绝启动');
+}
+
+/** 带 CDP 调试端口拉起 AStudio（daemon 侧；UI 按钮走 Rust 的 launch_astudio） */
+function asLaunchApp() {
+  const exe = detectAstudioExe();
+  if (!exe) return false;
+  try {
+    spawn(exe, ['--remote-debugging-port=' + AS_CDP_PORT], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    return true;
+  } catch (_) { return false; }
+}
+
+/** 在 AStudio 渲染进程里执行 JS（页面 target = acode://app/index.html…） */
+async function asCdpEval(jsExpr) {
+  if (!AS_DATA_DIR) return null;
+  let list;
+  try {
+    const r = await fetch('http://127.0.0.1:' + AS_CDP_PORT + '/json/list', { signal: AbortSignal.timeout(1500) });
+    list = await r.json();
+  } catch (_) { return null; } // 未运行 / 未开调试端口
+  const pages = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+  const page = pages.find((t) => /^acode:\/\/app\//i.test(String(t.url || '')))
+    || pages.find((t) => /acode|astudio/i.test(String(t.url || '') + ' ' + String(t.title || '')));
+  if (!page) return null;
+  return cdpEvalOnWs(page.webSocketDebuggerUrl, jsExpr, 15000);
+}
+
+/**
+ * ⚠️ 本函数体经 fn.toString() 送进 AStudio 渲染进程执行
+ * （'(' + asApiImpl.toString() + ')("xxx")' → CDP Runtime.evaluate returnByValue+awaitPromise）。
+ * 因此：1) 绝不可引用本文件内的任何外部变量；2) 参数与返回值必须可 JSON 序列化。
+ * action: 'session' | 'points' | 'daily'
+ */
+async function asApiImpl(action) {
+  const b = window.desktopBridge;
+  if (!b || typeof b.getWsUrl !== 'function') return { error: 'no-desktopBridge' };
+  let wsUrl;
+  try { wsUrl = String(await b.getWsUrl()); } catch (e) { return { error: 'getWsUrl-failed:' + ((e && e.message) || e) }; }
+  let u;
+  try { u = new URL(wsUrl); } catch (e) { return { error: 'bad-ws-url:' + wsUrl }; }
+  const origin = 'http://' + u.host;
+  const tok = u.searchParams.get('token') || '';
+  const withTok = (p) => origin + p + '?token=' + encodeURIComponent(tok);
+  const call = (p, init) => fetch(withTok(p), init)
+    .then((r) => r.json().then((j) => ({ status: r.status, body: j })).catch(() => ({ status: r.status, body: null })))
+    .catch((e) => ({ status: 0, body: null, error: String((e && e.message) || e) }));
+  const get = (p) => call(p, { method: 'GET' });
+  const post = (p, body) => call(p, {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const pick = (r) => (r && r.body) || null;
+  const port = u.port || '';
+  // 客户端预览夹具（popupId 为负 / instanceKey=DEV_PREVIEW）必须排除，否则会误判为真实每日奖励
+  const isRealPopup = (p) => !!(p && Number.isSafeInteger(p.popupId) && p.popupId > 0
+    && p.instanceKey && p.instanceKey !== 'DEV_PREVIEW');
+  const dailies = (list) => (Array.isArray(list) ? list : []).filter((p) => p && p.componentType === 'DAILY_REWARD_DIALOG' && isRealPopup(p));
+
+  if (action === 'session') {
+    const profile = await get('/api/astron-auth/user-profile');
+    return { port: port, profile: pick(profile) };
+  }
+  if (action === 'points') {
+    const bal = await get('/api/astron-auth/points-balance');
+    const mem = await get('/api/astron-auth/membership');
+    const sum = await get('/api/astron-client-popups/points-summary');
+    return { port: port, balance: pick(bal), membership: pick(mem), summary: pick(sum) };
+  }
+  if (action === 'daily') {
+    const before = pick(await get('/api/astron-client-popups/pending'));
+    const list = (before && Array.isArray(before.popups)) ? before.popups : [];
+    const daily = dailies(list)[0] || null;
+    if (!daily) {
+      return { port: port, pending: list.length, daily: false, already: true, balance: pick(await get('/api/astron-auth/points-balance')) };
+    }
+    const c = await post('/api/astron-client-popups/complete', { popupId: daily.popupId, instanceKey: daily.instanceKey });
+    const after = pick(await get('/api/astron-client-popups/pending'));
+    const list2 = (after && Array.isArray(after.popups)) ? after.popups : [];
+    return {
+      port: port, pending: list.length, daily: true,
+      popupCode: daily.popupCode || null,
+      points: (daily.payload && daily.payload.points) || null,
+      completeStatus: c.status,
+      completeError: (c.body && (c.body.error || c.body.desc || c.body.message)) || c.error || null,
+      completed: dailies(list2).length === 0,
+      remaining: list2.length,
+      balance: pick(await get('/api/astron-auth/points-balance')),
+    };
+  }
+  return { error: 'bad-action:' + action };
+}
+
+/** 刷新当前账号（昵称/手机号）：云端 userInfo 优先（免启动），CDP user-profile 兜底。
+ *  记录始终以「本机 session 文件的 uid」为准 —— 那才是这份登录态真正属于的账号；
+ *  云端/CDP 只刷新显示字段，uid 不一致时不合并（避免把别人的 session 记到别的账号上）。
+ *  失败由调用方静默（仍返回账号库备份）。 */
+async function asRefreshCurrentAccount() {
+  const session = asReadSession();
+  if (!session || !session.uid) throw new Error('AStudio 未登录（astron-session.json 缺失）');
+  const uid = String(session.uid);
+  let nickname = session.nickname || uid;
+  let phone = session.mobile || '';
+  // 云端 userInfo（免启动；只刷新显示字段）
+  try {
+    const d = await asCloudRequest('/xingchen-studio/userInfo');
+    const u = (d && d.userInfo) || {};
+    if (String(u.uid || '') === uid) {
+      nickname = u.nickname || nickname;
+      phone = u.login || phone;
+    }
+  } catch (_) {
+    // CDP 兜底（AStudio 以调试模式运行时可用）
+    try {
+      const obj = await asCdpEval('(' + asApiImpl.toString() + ')("session")');
+      const sess = obj && obj.profile && obj.profile.session;
+      if (sess && String(sess.uid) === uid) {
+        nickname = sess.nickname || nickname;
+        phone = sess.mobile || phone;
+      }
+    } catch (_) {}
+  }
+  const store = loadStore();
+  const rec = {
+    uid,
+    nickname,
+    phone,
+    loginMethod: session.loginMethod || '',
+    session, // 完整登录态快照（切换时整文件写回）
+    tokenExpiresAt: null,
+    backedUpAt: Date.now(),
+  };
+  const i = store.as.accounts.findIndex((x) => x && String(x.uid) === uid);
+  if (i >= 0) store.as.accounts[i] = Object.assign({}, store.as.accounts[i], rec);
+  else store.as.accounts.push(rec);
+  store.as.current = Object.assign({}, store.as.accounts[i >= 0 ? i : store.as.accounts.length - 1]);
+  saveStore(store);
+  return { uid, nickname };
+}
+
+/** 列出 AStudio 全部账号（当前登录 + 账号库；记录形如 ac 的扁平结构） */
+function asListAccounts() {
+  clientSyncStore('as');
+  const store = loadStore();
+  const currentRaw = clientReadAuth('as');
+  const currentUid = currentRaw && currentRaw.account ? String(currentRaw.account.uid) : null;
+  const seen = new Set();
+  const list = [];
+  const push = (raw) => {
+    if (!raw || !raw.uid) return;
+    const uid = String(raw.uid);
+    if (seen.has(uid)) return;
+    seen.add(uid);
+    list.push({
+      uid,
+      nickname: wbStr(raw.nickname) || uid,
+      phone: wbStr(raw.phone) || '',
+      uin: '',
+      loginMethod: raw.loginMethod || '',
+      tokenExpiresAt: null,   // astron-session.json 无到期字段，只有 loggedInAt
+      refreshExpiresAt: null,
+      lastRefreshTime: null,
+    });
+  };
+  if (currentRaw) {
+    push({
+      uid: currentRaw.account.uid,
+      nickname: currentRaw.account.nickname,
+      phone: currentRaw.account.phoneNumber,
+      loginMethod: (currentRaw.session && currentRaw.session.loginMethod) || '',
+    });
+  }
+  for (const a of store.as.accounts) push(a);
+  list.sort((a, b) => (a.uid === currentUid ? -1 : b.uid === currentUid ? 1 : 0));
+  const cache = clientLoadCheckinCache('as');
+  const today = todayStrLocal();
+  return {
+    currentUid,
+    accounts: list.map((a) => Object.assign(a, {
+      checkin: cache[a.uid] && cache[a.uid].date === today && !clientCheckinState.as.inFlight
+        ? { ok: !!cache[a.uid].ok, already: !!cache[a.uid].already, code: cache[a.uid].code, message: cache[a.uid].message }
+        : null,
+    })),
+  };
+}
+
+/** points-balance 的 activity/member/buy 三个桶 → 前端积分段 */
+function asSegments(balance) {
+  const b = balance || {};
+  const seg = [];
+  const push = (rem, tot, source) => {
+    const r = Number(rem || 0);
+    if (r > 0) seg.push({ remaining: r, total: Number(tot || r), expiresAt: null, source });
+  };
+  push(b.activityBalance, b.activityTotal, '活动积分');
+  push(b.memberBalance, b.memberTotal, '会员积分');
+  push(b.buyBalance, b.buyTotal, '购买积分');
+  const total = Number(b.totalBalance != null ? b.totalBalance : (b.totalAmount || 0));
+  const visible = seg.reduce((s, x) => s + x.remaining, 0);
+  if (total > visible + 0.01) seg.push({ remaining: total - visible, total: total - visible, expiresAt: null, source: '其他积分' });
+  if (!seg.length && total > 0) seg.push({ remaining: total, total, expiresAt: null, source: '积分' });
+  return { credits: total, segments: seg, count: seg.length };
+}
+
+/** 每日积分（签到）：云端直连优先（免启动，pending → complete）；失败回落 CDP。
+ *  ⚠️ 只认 popupId 为正整数且非 DEV_PREVIEW 的真实弹窗（客户端预览夹具不能回传）。 */
+function asPickDailyPopup(list) {
+  return (Array.isArray(list) ? list : []).find((p) => p && p.componentType === 'DAILY_REWARD_DIALOG'
+    && Number.isSafeInteger(p.popupId) && p.popupId > 0
+    && p.instanceKey && p.instanceKey !== 'DEV_PREVIEW') || null;
+}
+
+async function asDailyCheckin() {
+  // —— 云端直连（无需启动 AStudio）——
+  try {
+    const pending = await asCloudRequest('/xingchen-studio/client-popups/pending');
+    const daily = asPickDailyPopup(pending);
+    if (!daily) return { ok: true, already: true, code: 0, message: '今日无每日积分弹窗' };
+    await asCloudRequest('/xingchen-studio/client-popups/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ popupId: daily.popupId, instanceKey: daily.instanceKey }),
+    });
+    return { ok: true, already: false, code: 0, message: '每日积分已领取' + ((daily.payload && daily.payload.points) ? ' +' + daily.payload.points : '') };
+  } catch (cloudErr) {
+    // —— 回落：CDP（AStudio 以调试模式运行时走本地服务）——
+    const r = await asCdpEval('(' + asApiImpl.toString() + ')("daily")').catch(() => null);
+    if (r && !r.error) {
+      if (!r.daily) return { ok: true, already: true, code: 0, message: '今日无每日积分弹窗' };
+      if (r.completed) return { ok: true, already: false, code: 0, message: '每日积分已领取' + (r.points ? ' +' + r.points : '') };
+      return { ok: false, code: -1, message: '每日积分领取失败: ' + (r.completeError || ('HTTP ' + r.completeStatus)) };
+    }
+    return { ok: false, code: -1, message: '签到失败: ' + cloudErr.message };
+  }
+}
+
+/** AStudio 积分查询：云端直连优先（免启动）；失败回落 CDP */
+async function asFetchCredits() {
+  let cloudErr = null;
+  try {
+    const b = await asCloudRequest('/xingchen-studio/points/balance');
+    return asSegments(b);
+  } catch (e) { cloudErr = e; }
+  // 回落：CDP（AStudio 以调试模式运行时可用；云端失败多半是登录态问题，App 侧可续期）
+  const r = await asCdpEval('(' + asApiImpl.toString() + ')("points")').catch(() => null);
+  if (r && !r.error && r.balance) return asSegments(r.balance);
+  throw cloudErr || new Error('AStudio 未运行或未开启调试端口（请先点「启动 AStudio」）');
+}
+
+/** AStudio 一键切换：停客户端（等单实例锁释放）→ 写 astron-session.json →
+ *  同步所有 config.toml → 原本在运行则带 CDP 重启。 */
+async function asSwitchToAccount(uid) {
+  const store = loadStore();
+  const idx = store.as.accounts.findIndex((x) => x && String(x.uid) === String(uid));
+  if (idx < 0) throw new Error('账号备份不存在');
+  const rec = store.as.accounts[idx];
+  if (!rec.session || !rec.session.uid) throw new Error('该备份缺少登录态（session），无法切换');
+  if (!AS_SESSION_FILE) throw new Error('未找到 AStudio 数据目录（请先安装并登录一次）');
+  // 目标就是当前登录账号 → 直接返回。既避免无谓地杀进程/重启，
+  // 也避免用可能已过期的备份 session（token 轮换过）覆盖本机新鲜登录态。
+  const live = asReadSession();
+  if (live && String(live.uid) === String(uid)) {
+    return { uid, nickname: rec.nickname || uid, relaunched: false, alreadyCurrent: true, configFiles: 0 };
+  }
+  const wasRunning = asIsRunning();
+  asSwitching = true;
+  try {
+    if (wasRunning) { log('[client:as] 停止 AStudio 以写入登录态…'); await asKillApp(); }
+    asWriteSession(rec.session);
+    const n = asWriteProviderConfig(rec.session.uid, rec.session.modelBearerToken || '');
+    log('[client:as] 已写回 astron-session.json；config.toml 更新 ' + n + '/' + AS_CONFIG_FILES.length + ' 处');
+    const st2 = loadStore();
+    const i2 = st2.as.accounts.findIndex((x) => x && String(x.uid) === String(uid));
+    if (i2 >= 0) st2.as.current = Object.assign({}, st2.as.accounts[i2]);
+    saveStore(st2);
+    let relaunched = false;
+    if (wasRunning) {
+      relaunched = asLaunchApp();
+      log('[client:as] 切换前客户端在运行，已自动重启' + (relaunched ? '' : '（重启失败）'));
+    }
+    return { uid, nickname: rec.nickname || uid, relaunched, configFiles: n };
+  } finally {
+    asSwitching = false;
+  }
+}
+
+// ---------------- ZCode（Z.ai Coding Plan 客户端）：账号备份/切换（无签到） ----------------
+// 登录态：~/.zcode/v2/credentials.json（自定义 enc:v1: AES-256-GCM，key = sha256(secret)，
+// secret = env.ZCODE_CREDENTIAL_SECRET || `zcode-credential-fallback:${platform}:${homedir}:${username}`）。
+// 账号切换 = 整文件快照写回 + 重启 ZCode（与 AStudio 同思路）；本客户端无每日签到/无积分接口。
+const ZC_HOME_DIR = path.join(os.homedir(), '.zcode');
+const ZC_EXE_NAME = 'ZCode.exe';
+// 多根搜索（C/D 盘 Program Files、x86、LOCALAPPDATA 及其 Programs），另带 Preview 版
+const ZC_EXE_CANDIDATES = (process.env.WORKPET_ZCODE_BIN ? [process.env.WORKPET_ZCODE_BIN] : []).concat(isMac ? [
+  '/Applications/ZCode.app/Contents/MacOS/ZCode',
+] : winProgramRoots().map((root) => path.join(root, 'zcode', ZC_EXE_NAME)).concat([
+  path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'ZCode Preview', 'ZCode Preview.exe'),
+]));
+// Preview 版进程名是 'ZCode Preview.exe'；kill 时两种名字都试
+const ZC_KILL_NAMES = ['ZCode.exe', 'ZCode Preview.exe'];
+
+function detectZcodeExe() {
+  for (const p of ZC_EXE_CANDIDATES) {
+    try { if (fs.existsSync(p) && fs.statSync(p).isFile()) return p; } catch (_) {}
+  }
+  return null;
+}
+
+/** 定位凭据文件：~/.zcode 下 vN 目录里的 credentials.json（取最近修改的一份）；未安装/未登录返回 null */
+function detectZcodeCredFile() {
+  const env = process.env.WORKPET_ZCODE_CRED_FILE;
+  if (env && fs.existsSync(env)) return env;
+  try {
+    const cands = fs.readdirSync(ZC_HOME_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^v\d+$/.test(e.name))
+      .map((e) => path.join(ZC_HOME_DIR, e.name, 'credentials.json'))
+      .filter((f) => { try { return fs.existsSync(f); } catch (_) { return false; } });
+    if (cands.length) {
+      cands.sort((a, b) => { try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; } catch (_) { return 0; } });
+      return cands[0];
+    }
+  } catch (_) {}
+  return null;
+}
+let ZC_CRED_FILE = detectZcodeCredFile();
+
+/** 凭据文件路径（懒探测：daemon 先于 ZCode 启动也能在安装/登录后被识别） */
+function zcCredFilePath() {
+  if (!ZC_CRED_FILE || !fs.existsSync(ZC_CRED_FILE)) ZC_CRED_FILE = detectZcodeCredFile();
+  return ZC_CRED_FILE;
+}
+
+function zcSecret() {
+  if (process.env.ZCODE_CREDENTIAL_SECRET) return process.env.ZCODE_CREDENTIAL_SECRET;
+  let user = 'unknown';
+  try { user = os.userInfo().username; } catch (_) {}
+  return 'zcode-credential-fallback:' + process.platform + ':' + os.homedir() + ':' + user;
+}
+function zcCipherKey() {
+  return crypto.createHash('sha256').update(zcSecret()).digest();
+}
+/** 解密 enc:v1:<iv>.<tag>.<ciphertext>（base64url，aes-256-gcm） */
+function zcDecryptValue(v) {
+  if (typeof v !== 'string' || !v.startsWith('enc:v1:')) return v;
+  const parts = v.slice(7).split('.');
+  if (parts.length !== 3) throw new Error('凭据密文格式异常');
+  const dec = crypto.createDecipheriv('aes-256-gcm', zcCipherKey(), Buffer.from(parts[0], 'base64url'));
+  dec.setAuthTag(Buffer.from(parts[1], 'base64url'));
+  return dec.update(Buffer.from(parts[2], 'base64url')).toString('utf8') + dec.final('utf8');
+}
+/** 加密成与 ZCode 一致的 enc:v1 格式（切换写回时用） */
+function zcEncryptValue(plain) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', zcCipherKey(), iv);
+  const ct = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
+  return 'enc:v1:' + iv.toString('base64url') + '.' + c.getAuthTag().toString('base64url') + '.' + ct.toString('base64url');
+}
+let zcSwitching = false; // 切换写入过程中挂起 watcher 同步，避免读到中间态
+
+/** 读取当前凭据文件原始对象（密文形态；缺失/损坏返回 null） */
+function zcReadCreds() {
+  const f = zcCredFilePath();
+  if (!f) return null;
+  const j = readJsonOrNull(f);
+  return j ? { file: f, creds: j } : null;
+}
+
+/** 当前激活的 provider id（zai / bigmodel …）：优先 oauth:active_provider，回退扫 oauth:<id>:user_info 键 */
+function zcActiveProvider(creds) {
+  let prov = null;
+  try { prov = String(zcDecryptValue(creds['oauth:active_provider']) || ''); } catch (_) {}
+  if (prov && creds['oauth:' + prov + ':user_info']) return prov;
+  const m = Object.keys(creds).find((k) => /^oauth:[^:]+:user_info$/.test(k));
+  return m ? m.split(':')[1] : null;
+}
+
+/** 从凭据对象解出账号信息 { uid, nickname, ident, email, username }；解不开（外部 secret 等）返回 null。
+ *  兼容两种 provider：zai（国际版，user_info 里 name/email）与 bigmodel（智谱，displayName/username/rawProfile）。 */
+function zcUserInfoFrom(creds) {
+  if (!creds || typeof creds !== 'object') return null;
+  try {
+    const prov = zcActiveProvider(creds);
+    if (!prov) return null;
+    const info = JSON.parse(zcDecryptValue(creds['oauth:' + prov + ':user_info']));
+    const raw = (info && info.rawProfile) || {};
+    const uid = String(info.user_id || info.id || raw.user_id || '');
+    if (!uid) return null;
+    const email = String(info.email || raw.email || '');
+    const username = String(info.username || raw.username || info.login || '');
+    const nickname = String(info.displayName || raw.displayName || info.name || raw.name || username || email || uid);
+    // 卡片展示用的账号标识：邮箱优先（zai），无邮箱则用户名（bigmodel）
+    const ident = email || username;
+    return { uid, nickname, ident, email, username, provider: prov };
+  } catch (_) { return null; }
+}
+
+/** 把当前登录快照并入账号库（watcher 变化时调用）；整文件快照凭据原样保存。
+ *  幂等：内容未变化时不写盘（前端轮询会频繁触发本函数）。 */
+function zcSyncStore() {
+  if (zcSwitching) return;
+  const live = zcReadCreds();
+  if (!live) return;
+  const info = zcUserInfoFrom(live.creds);
+  if (!info) return;
+  const store = loadStore();
+  const prev = store.zc.accounts.find((x) => x && String(x.uid) === info.uid) || null;
+  const credJson = JSON.stringify(live.creds);
+  const curUid = store.zc.current && store.zc.current.uid ? String(store.zc.current.uid) : null;
+  const unchanged = prev
+    && JSON.stringify(prev.cred) === credJson
+    && prev.nickname === info.nickname
+    && (prev.email || '') === info.email
+    && (prev.username || '') === info.username
+    && curUid === info.uid;
+  if (unchanged) return;
+  const rec = {
+    uid: info.uid,
+    nickname: info.nickname,
+    email: info.email,
+    username: info.username,
+    provider: info.provider,
+    ident: info.ident,
+    cred: live.creds, // 整文件快照（密文原样，切换时写回）
+    tokenExpiresAt: null, // ZCode 登录 token 无 exp（长效，不登出即有效）→ 不显示 Cookie 时限
+    backedUpAt: Date.now(),
+  };
+  const i = store.zc.accounts.findIndex((x) => x && String(x.uid) === info.uid);
+  if (i >= 0) store.zc.accounts[i] = Object.assign({}, store.zc.accounts[i], rec);
+  else store.zc.accounts.push(rec);
+  store.zc.current = Object.assign({}, store.zc.accounts[i >= 0 ? i : store.zc.accounts.length - 1]);
+  saveStore(store);
+}
+
+/** 账号列表：当前登录（凭据文件）排最前 + 账号库备份；ZCode 无每日签到 → checkin 恒为 null */
+function zcListAccounts() {
+  const store = loadStore();
+  const live = zcReadCreds();
+  const liveInfo = live ? zcUserInfoFrom(live.creds) : null;
+  const currentUid = liveInfo ? liveInfo.uid : null;
+  const seen = new Set();
+  const list = [];
+  const push = (uid, nickname, ident, lastRefreshTime) => {
+    uid = String(uid || '');
+    if (!uid || seen.has(uid)) return;
+    seen.add(uid);
+    list.push({
+      uid,
+      nickname: nickname || uid,
+      phone: ident || '',
+      uin: '',
+      tokenExpiresAt: null, // ZCode 登录 token 无 exp（长效）→ 不显示 Cookie 时限
+      refreshExpiresAt: null,
+      lastRefreshTime: lastRefreshTime || null,
+      checkin: null, // ZCode 无每日签到
+    });
+  };
+  if (liveInfo) push(liveInfo.uid, liveInfo.nickname, liveInfo.ident, Date.now());
+  for (const a of store.zc.accounts || []) push(a.uid, a.nickname, a.ident || a.email || a.username, a.backedUpAt);
+  list.sort((a, b) => (a.uid === currentUid ? -1 : b.uid === currentUid ? 1 : 0));
+  return { currentUid, accounts: list };
+}
+
+/** ZCode 主进程是否在运行 */
+function zcIsRunning() {
+  if (isMac) return false;
+  for (const name of ZC_KILL_NAMES) {
+    try {
+      const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq ' + name, '/FO', 'CSV', '/NH'],
+        { encoding: 'utf8', windowsHide: true });
+      if (out.includes(name)) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
+/** 停 ZCode：直接强杀（切换后必然带新登录态重启，无需优雅退出；先停干净再写，
+ *  避免客户端退出时把内存里的旧凭据回写覆盖）。强杀后等进程退出 —— Electron 单实例锁
+ *  要释放才能重启，最多 ~3.5s。旧实现用优雅关闭（taskkill /T 不带 /F）在多进程下
+ *  每个进程都要等窗口响应，整轮实测 ~23s，超过前端 12s 超时 → 表现为「不关闭 ZCode 就切换失败」。 */
+async function zcKillApp() {
+  if (isMac || !detectZcodeExe()) return;
+  for (const name of ZC_KILL_NAMES) {
+    try { execFileSync('taskkill', ['/IM', name, '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+  }
+  for (let i = 0; i < 14 && zcIsRunning(); i++) await sleep(250);
+  if (zcIsRunning()) log('[client:zc] 警告：ZCode 进程仍在退出中，重启可能被单实例锁挡下');
+}
+
+/** 拉起 ZCode（daemon 侧；UI 按钮走 Rust 的 launch_zcode）。正常启动即可，无需调试端口 */
+function zcLaunchApp() {
+  const exe = detectZcodeExe();
+  if (!exe) return false;
+  try {
+    spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    return true;
+  } catch (_) { return false; }
+}
+
+/** ZCode 切换账号：停客户端 → 写回备份凭据整文件 → 重启。
+ *  写入前先校验备份可解密（防 secret 不一致写坏登录态），写入后再读校验 uid。
+ *  串行化：连续点击/重试排队执行，避免并发杀进程与相互覆盖写文件。 */
+let zcSwitchChain = Promise.resolve();
+function zcSwitchToAccount(uid) {
+  const run = () => zcSwitchToAccountImpl(uid);
+  const p = zcSwitchChain.then(run, run);
+  zcSwitchChain = p.then(() => {}, () => {});
+  return p;
+}
+async function zcSwitchToAccountImpl(uid) {
+  const store = loadStore();
+  const rec = store.zc.accounts.find((x) => x && String(x.uid) === String(uid));
+  if (!rec || !rec.cred) throw new Error('账号备份不存在或缺少登录态');
+  const f = zcCredFilePath();
+  if (!f) throw new Error('未找到 ZCode 凭据文件（请先安装并登录一次）');
+  const live = zcReadCreds();
+  const liveInfo = live ? zcUserInfoFrom(live.creds) : null;
+  if (liveInfo && String(liveInfo.uid) === String(uid)) {
+    return { uid, nickname: rec.nickname || uid, relaunched: false, alreadyCurrent: true };
+  }
+  if (!zcUserInfoFrom(rec.cred)) throw new Error('备份登录态无法解密，无法切换');
+  const wasRunning = zcIsRunning();
+  zcSwitching = true;
+  try {
+    if (wasRunning) { log('[client:zc] 停止 ZCode 以写入登录态…'); await zcKillApp(); }
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const tmp = f + '.workpet-tmp';
+    fs.writeFileSync(tmp, JSON.stringify(rec.cred, null, 2));
+    fs.renameSync(tmp, f);
+    const check = zcUserInfoFrom(readJsonOrNull(f));
+    if (!check || String(check.uid) !== String(uid)) throw new Error('登录态写入校验失败');
+    log('[client:zc] 已写回 credentials.json（' + (rec.nickname || uid) + '）');
+    const st2 = loadStore();
+    const i2 = st2.zc.accounts.findIndex((x) => x && String(x.uid) === String(uid));
+    if (i2 >= 0) st2.zc.current = Object.assign({}, st2.zc.accounts[i2]);
+    saveStore(st2);
+    let relaunched = false;
+    if (wasRunning) {
+      relaunched = zcLaunchApp();
+      log('[client:zc] 切换前客户端在运行，已自动重启' + (relaunched ? '' : '（重启失败）'));
+    }
+    return { uid, nickname: rec.nickname || uid, relaunched };
+  } finally {
+    zcSwitching = false;
+  }
+}
+
 const CLIENT_PROFILES = {
   wb: {
     id: 'wb', name: 'WorkBuddy',
@@ -1202,6 +2205,20 @@ const CLIENT_PROFILES = {
     apiHost: '',
     checkinHosts: [],
     cdpPort: 9228,
+  },
+  as: {
+    id: 'as', name: 'AStudio',
+    authFile: AS_SESSION_FILE, // 明文 JSON；读写见 asReadSession/asWriteSession
+    apiHost: '',               // 业务接口在本地随机端口，只能经 CDP 在渲染进程内调用
+    checkinHosts: [],
+    cdpPort: AS_CDP_PORT,
+  },
+  zc: {
+    id: 'zc', name: 'ZCode',
+    authFile: ZC_CRED_FILE,    // ~/.zcode/v*/credentials.json；读写见 zcReadCreds/zcSwitchToAccount
+    apiHost: '',               // 无签到/积分接口，仅账号备份与切换
+    checkinHosts: [],
+    cdpPort: 0,                // 无需调试端口
   },
 };
 
@@ -1359,6 +2376,28 @@ async function acDecryptTokenAsync(encStr) {
 
 /** 读取 AutoClaw 登录态（解密后），返回 { token, refreshToken, userId, phone, deviceId, raw } 或 { error } */
 function acReadAuth() {
+  if (ac2IsNewLayout()) {
+    // AutoClaw2：账号在 AutoClaw-official/accounts/<key>/（profile 明文，凭据 app-bound 加密）。
+    // token 外部拿不到 —— 积分走 CDP 渲染进程（zworkAuth），这里只提供账号身份。
+    const activeKey = ac2ReadActiveKey();
+    const profiles = ac2ReadProfiles();
+    const active = profiles.find((p) => p.accountKey === activeKey) || profiles[0] || null;
+    if (!active) return null;
+    return {
+      account: {
+        uid: String(active.accountId),
+        nickname: active.displayName || active.phone || String(active.numericUserId || ''),
+        phoneNumber: active.phone || '',
+      },
+      auth: {
+        accessToken: '',
+        refreshToken: '',
+        expiresAt: null,
+        lastRefreshTime: active.lastLoginAt ? active.lastLoginAt * 1000 : null,
+      },
+      ac2: active,
+    };
+  }
   const raw = readJsonOrNull(AC_AUTH_FILE);
   if (!raw || !raw.token) return null;
   try {
@@ -1910,6 +2949,8 @@ const clientCheckinState = {
   cb: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
   ac: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
   ca: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
+  as: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
+  zc: { inFlight: false, running: false, total: 0, done: 0, startedAt: 0, finishedAt: 0 },
 };
 // WB/CB 账号体系互通：同一账号在两端并发签到会被服务端以「请求处理中」拒绝，
 // 因此签到全局串行（一次只跑一个 profile 的签到轮）
@@ -1948,6 +2989,28 @@ function clientReadAuth(profileId) {
       },
     };
   }
+  if (profileId === 'as') {
+    // AStudio：登录态是明文 JSON，无加密；归一化成 { account, auth, session } 供下游统一消费
+    const s = asReadSession();
+    if (!s) return null;
+    return {
+      account: { uid: String(s.uid), nickname: s.nickname || String(s.uid), phoneNumber: s.mobile || '' },
+      auth: { accessToken: String(s.token || ''), refreshToken: '', expiresAt: null, lastRefreshTime: null },
+      session: s, // 原样保留，切换时整文件写回
+    };
+  }
+  if (profileId === 'zc') {
+    // ZCode：凭据文件为 enc:v1 密文；归一化成 { account, auth, cred }（cred 供切换整文件写回）
+    const live = zcReadCreds();
+    if (!live) return null;
+    const info = zcUserInfoFrom(live.creds);
+    if (!info) return null;
+    return {
+      account: { uid: info.uid, nickname: info.nickname, phoneNumber: info.email },
+      auth: { accessToken: '', refreshToken: '', expiresAt: info.jwtExp || null, lastRefreshTime: null },
+      cred: live.creds, // 原样保留，切换时整文件写回
+    };
+  }
   const raw = readJsonOrNull(CLIENT_PROFILES[profileId].authFile);
   if (!raw || !raw.account || !raw.account.uid) return null;
   return raw;
@@ -1956,11 +3019,32 @@ function clientReadAuth(profileId) {
 /** 把当前登录同步进账号库（登录文件变化时调用）；CodeArts 走异步解密，单独实现 */
 function clientSyncStore(profileId) {
   if (profileId === 'ca') return; // ca 由 caSyncStore（异步）维护，不走 auth 文件路径
+  if (profileId === 'zc') { try { zcSyncStore(); } catch (e) { log('[client:zc] 同步账号库失败: ' + e.message); } return; }
   const raw = clientReadAuth(profileId);
   if (!raw) return;
   const store = loadStore();
-  const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
   const uid = String(raw.account.uid);
+  if (profileId === 'as') {
+    // as 段：扁平记录 + 完整 session 快照（切换账号时整文件写回 astron-session.json）。
+    // 必须先于下面的 sec 三元返回，否则会落进 ac 段（三元默认分支是 'ac'）。
+    if (asSwitching) return; // 切换写入过程中别把中间态覆盖回账号库
+    const rec = {
+      uid,
+      nickname: wbStr(raw.account.nickname) || uid,
+      phone: wbStr(raw.account.phoneNumber) || '',
+      loginMethod: (raw.session && raw.session.loginMethod) || '',
+      session: raw.session,
+      tokenExpiresAt: null,
+      backedUpAt: Date.now(),
+    };
+    const i = store.as.accounts.findIndex((x) => x && String(x.uid) === uid);
+    if (i >= 0) store.as.accounts[i] = Object.assign({}, store.as.accounts[i], rec);
+    else store.as.accounts.push(rec);
+    store.as.current = Object.assign({}, store.as.accounts[i >= 0 ? i : store.as.accounts.length - 1]);
+    saveStore(store);
+    return;
+  }
+  const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
   if (profileId === 'ac') {
     // ac 段存扁平记录（uid/accessToken/tokenExpiresAt），与 wb/cb 的 { account, auth } 结构不同
     const rec = {
@@ -1986,9 +3070,26 @@ function clientSyncStore(profileId) {
   saveStore(store);
 }
 
+/**
+ * WorkBuddy 5.6 起 `nickname` / `phoneNumber` / `accessToken` / `refreshToken` 等字段会被写成
+ * `{$wbEncrypted, envelope}` 加密信封对象（同一机器 keyblob 下由 WorkBuddy 自身解密）。
+ * 这里不解密，只做「取用安全」处理：信封一律视为「无可用明文值」。否则对象会漏进前端
+ * 渲染成 [object Object]，或被当 Bearer token 拼成 "Bearer [object Object]" 导致签到/积分全挂。
+ */
+function wbIsEnvelope(v) {
+  return !!(v && typeof v === 'object' && !Array.isArray(v) && v.$wbEncrypted);
+}
+// 取字段的「明文字符串」：字符串原样返回；信封/其它类型返回 null。
+function wbStr(v) {
+  return typeof v === 'string' && v.length ? v : null;
+}
+
 /** 列出客户端全部账号 + 当前登录（当前以 auth 文件为准）；CodeArts 单独实现 */
 function clientListAccounts(profileId) {
   if (profileId === 'ca') return caListAccounts();
+  if (profileId === 'as') return asListAccounts();
+  if (profileId === 'zc') return zcListAccounts();
+  if (profileId === 'ac' && ac2IsNewLayout()) return ac2ListAccounts();
   clientSyncStore(profileId);
   const store = loadStore();
   const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
@@ -2005,8 +3106,8 @@ function clientListAccounts(profileId) {
       seen.add(uid2);
       list.push({
         uid: uid2,
-        nickname: raw.nickname || uid2,
-        phone: raw.phone || '',
+        nickname: wbStr(raw.nickname) || String(uid2),
+        phone: wbStr(raw.phone) || '',
         uin: '',
         tokenExpiresAt: raw.tokenExpiresAt || null,
         refreshExpiresAt: null,
@@ -2019,15 +3120,17 @@ function clientListAccounts(profileId) {
     if (seen.has(uid)) return;
     seen.add(uid);
     const auth = raw.auth || {};
-    list.push({
-      uid,
-      nickname: raw.account.nickname || '',
-      phone: raw.account.phoneNumber || '',
-      uin: raw.account.uin || '',
-      tokenExpiresAt: auth.expiresAt || null,
-      refreshExpiresAt: auth.refreshExpiresAt || null,
-      lastRefreshTime: auth.lastRefreshTime || null,
-    });
+      list.push({
+        uid,
+        // nickname 加密时为信封对象 → 回落到明文 uin（账号数字 id），再回落 uid，避免 [object Object]
+        nickname: wbStr(raw.account.nickname) || raw.account.uin || String(uid),
+        // phoneNumber 加密时为信封对象 → 回落空串，前端显示 "-"
+        phone: wbStr(raw.account.phoneNumber) || '',
+        uin: raw.account.uin || '',
+        tokenExpiresAt: auth.expiresAt || null,
+        refreshExpiresAt: auth.refreshExpiresAt || null,
+        lastRefreshTime: auth.lastRefreshTime || null,
+      });
   };
   if (currentRaw) push(currentRaw);
   for (const a of sec.accounts) push(a);
@@ -2039,24 +3142,186 @@ function clientListAccounts(profileId) {
     accounts: list.map((a) => {
       const rec = cache[a.uid];
       return Object.assign(a, {
-        checkin: rec && rec.date === today && !clientCheckinState[profileId].inFlight
+        // 已有「今日 ok」缓存的账号即使在批量进行中也照常显示（否则加入旅行循环后
+        // 批量变慢，UI 每 3s 的拉取几乎总落在 inFlight 窗口内，徽章会整体消失）
+        checkin: rec && rec.date === today && (!clientCheckinState[profileId].inFlight || rec.ok)
           ? { ok: !!rec.ok, already: !!rec.already, code: rec.code, message: rec.message }
           : null,
+        // WorkBuddy 成长空间自动旅行状态（旅行中倒计时/归来收益；其它端恒为 null）
+        travel: profileId === 'wb' ? (wbTravelState[a.uid] || null) : null,
       });
     }),
   };
 }
 
-function clientTokenFor(profileId, uid) {
+// ---------------- WorkBuddy 经 CDP 提取明文 token ----------------
+// WorkBuddy 5.6 起 accessToken 是加密信封（{$wbEncrypted, envelope}），文件里的 token 不可用。
+// 但 WorkBuddy 是 Electron 应用，被 WorkPet 以 --remote-debugging-port 拉起后，其渲染进程里
+// 持有解密后的明文 token（localStorage / sessionStorage，或 window.electronAPI）。这里经 CDP
+// 进渲染进程把它读出来，仅「当前登录账号」可获取（运行中的 app 只持有当前账号的 token）。
+// 注意：WorkBuddy 与 TraeWork 共用 9222 调试端口，仅先拉起的一方有 CDP；且必须经 WorkPet 的
+// 「启动 WorkBuddy（CDP 注入）」按钮拉起（带 --remote-debugging-port），手动打开的实例无端口。
+
+/** 在指定 CDP WebSocket 上执行一段 JS，返回 returnByValue 的结果（失败/超时返回 null）。 */
+async function cdpEvalOnWs(wsUrl, jsExpr, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    let ws;
+    try { ws = new WebSocket(wsUrl); } catch (e) { return resolve(null); }
+    const timer = setTimeout(() => { try { ws.close(); } catch (_) {} resolve(null); }, timeoutMs);
+    let id = 0; const pend = new Map();
+    ws.onopen = () => {
+      const i = ++id;
+      pend.set(i, true);
+      ws.send(JSON.stringify({
+        id: i, method: 'Runtime.evaluate',
+        params: { expression: jsExpr, returnByValue: true, awaitPromise: true, scriptTimeout: Math.max(1000, timeoutMs - 1000) },
+      }));
+    };
+    ws.onmessage = (ev) => {
+      try {
+        const m = JSON.parse(ev.data);
+        if (m.id && pend.has(m.id)) {
+          pend.delete(m.id);
+          clearTimeout(timer);
+          try { ws.close(); } catch (_) {}
+          // CDP 响应结构是 {id, result:{result:{value}}}。这里 resolve 的是整条消息，
+          // 必须取 m.result.result.value；写成 m.result.value 会永远拿到 undefined
+          // （曾导致 WorkBuddy 的 CDP 取明文 token 静默失效，一直回落到文件 token）。
+          const rv = m.result && (m.result.result ? m.result.result.value : m.result.value);
+          resolve(m.error ? null : rv);
+        }
+      } catch (_) {}
+    };
+    ws.onerror = () => { clearTimeout(timer); resolve(null); };
+    ws.onclose = () => { clearTimeout(timer); };
+  });
+}
+
+/** 连接 WorkBuddy 的 CDP 端口，定位其渲染页（按标题/url 含 workbuddy，避开 TraeWork 的 workbench），执行 JS。 */
+async function wbCdpEval(jsExpr) {
+  const port = CLIENT_PROFILES.wb.cdpPort;
+  let list;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) });
+    list = await r.json();
+  } catch (_) { return null; }
+  const targets = Array.isArray(list) ? list : [];
+  const page = targets.find((t) => t.type === 'page' && /workbuddy/i.test(String(t.title || '') + ' ' + String(t.url || '')))
+    || targets.find((t) => t.type === 'page' && !/workbench|vscode-file/i.test(String(t.url || '')));
+  if (!page || !page.webSocketDebuggerUrl) return null;
+  return cdpEvalOnWs(page.webSocketDebuggerUrl, jsExpr);
+}
+
+// 渲染进程内执行的提取逻辑：扫 localStorage/sessionStorage 与 window.electronAPI，收集所有 JWT 形态的 token。
+async function wbExtractTokenImpl() {
+  try {
+    const jwtRe = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+    const pick = (o) => {
+      if (!o) return null;
+      if (typeof o === 'string') { const s = o.replace(/^Bearer\s+/i, '').trim(); return jwtRe.test(s) ? s : null; }
+      const flat = JSON.stringify(o);
+      const m = flat.match(/"([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"/);
+      return m ? m[1] : null;
+    };
+    const scan = (store) => {
+      const out = [];
+      if (!store || !store.length) return out;
+      for (let i = 0; i < store.length; i++) {
+        const k = store.key(i);
+        let v = null;
+        try { v = store.getItem(k); } catch (e) { continue; }
+        const t = pick(v);
+        if (t) out.push(t);
+      }
+      return out;
+    };
+    let found = [];
+    try { found = found.concat(scan(window.localStorage)); } catch (e) {}
+    try { found = found.concat(scan(window.sessionStorage)); } catch (e) {}
+    const api = window.electronAPI;
+    if (api && typeof api === 'object') {
+      const cands = ['getToken', 'getAccessToken', 'getTokenCache', 'getAuth', 'accessToken', 'token'];
+      for (const m of cands) {
+        try {
+          const fn = api[m];
+          if (typeof fn === 'function') { const r = await fn.call(api); const t = pick(r); if (t) found.push(t); }
+          else if (typeof fn === 'string') { const t = pick(fn); if (t) found.push(t); }
+        } catch (e) {}
+      }
+    }
+    return { found: found, hasApi: !!api };
+  } catch (e) { return { found: [], error: String(e) }; }
+}
+
+/** 经 CDP 取当前 WorkBuddy 账号的明文 token；5 分钟缓存，过期或失效再拉。返回 {token,uid,exp} 或 null。 */
+let wbTokenCache = { token: null, uid: null, exp: 0, at: 0 };
+async function wbExtractToken() {
+  const now = Date.now();
+  if (wbTokenCache.token && now - wbTokenCache.at < 5 * 60 * 1000 && wbTokenCache.exp > now) return wbTokenCache;
+  const obj = await wbCdpEval('(' + wbExtractTokenImpl.toString() + ')()').catch(() => null);
+  if (!obj || !Array.isArray(obj.found) || !obj.found.length) return null;
+  for (const t of obj.found) {
+    try {
+      const parts = String(t).split('.');
+      if (parts.length !== 3) continue;
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+      const uid = String(payload.user_id || payload.uid || payload.sub || payload.phone || payload.jti || '');
+      const exp = payload.exp ? payload.exp * 1000 : 0;
+      if (exp && exp <= now) continue; // 过期 token 跳过
+      wbTokenCache = { token: t, uid, exp, at: now };
+      return wbTokenCache;
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function clientTokenFor(profileId, uid) {
   if (profileId === 'ca') return null; // CodeArts 无签到/积分，不需要取 token
+  if (profileId === 'zc') return null; // ZCode 无签到/积分，不需要取 token
+  if (profileId === 'as') {
+    // AStudio 的本地服务只服务「当前登录账号」→ 非当前账号返回 null（静默跳过签到/积分）。
+    // 这里返回的是 session.token（UUID，非 JWT），仅作为「该账号可查询」的凭据标记；
+    // 真正的本地 API 鉴权 token 在渲染进程内存里，由 CDP 流程自行解析。
+    const cur = clientReadAuth('as');
+    if (!cur || !cur.account) return null;
+    return String(cur.account.uid) === String(uid) ? (wbStr(cur.auth && cur.auth.accessToken) || 'current') : null;
+  }
+  if (profileId === 'ac' && ac2IsNewLayout()) {
+    // AutoClaw2：token 锁在 app-bound 加密凭据里（外部解不开），积分经 CDP 渲染进程取。
+    // 仅当前活跃账号可查询；其余备份账号返回 null（静默跳过）。
+    const activeKey = ac2ReadActiveKey();
+    const act = ac2ReadProfiles().find((p) => p.accountKey === activeKey) || null;
+    return act && String(act.accountId) === String(uid) ? 'current' : null;
+  }
+  // WorkBuddy 5.6+：accessToken 是加密信封（{$wbEncrypted, envelope}），文件里的 token 不可用。
+  // 但 WorkBuddy 是 Electron 应用，被 WorkPet 以 --remote-debugging-port 拉起后，其渲染进程里
+  // 持有解密后的明文 token。这里优先经 CDP 取「当前登录（运行中）账号」的明文 token。
+  // 仅运行中的那一个账号能取到；其它账号回落到文件里的明文/信封（信封→null，禁用其签到/积分）。
+  if (profileId === 'wb') {
+    try {
+      const cdp = await wbExtractToken();
+      if (cdp && cdp.token) {
+        const cur = clientReadAuth('wb');
+        const curUid = cur && cur.account ? String(cur.account.uid) : null;
+        // 请求的账号即当前（运行中的）账号 → 直接用 CDP 取到的明文 token
+        if (String(uid) === String(curUid)) return cdp.token;
+        // 否则若 token 自带的 uid 也能对上请求的账号，也用
+        if (cdp.uid && String(cdp.uid) === String(uid)) return cdp.token;
+      }
+    } catch (e) {
+      log('[client:wb] CDP 取 token 失败: ' + e.message);
+    }
+  }
   const raw = clientReadAuth(profileId);
-  if (raw && String(raw.account.uid) === String(uid)) return raw.auth && raw.auth.accessToken;
+  // WorkBuddy 5.6：accessToken 可能是 {$wbEncrypted, envelope} 信封对象，必须拦下，
+  // 否则会被拼成 "Bearer [object Object]" 发给官方接口。信封需由 WorkBuddy 自身解密。
+  if (raw && String(raw.account.uid) === String(uid)) return wbStr(raw.auth && raw.auth.accessToken);
   const store = loadStore();
   const sec = store[profileId === 'wb' ? 'workbuddy' : profileId === 'cb' ? 'codebuddy' : 'ac'];
   const rec = sec.accounts.find((a) => a && (a.account ? String(a.account.uid) === String(uid) : String(a.uid) === String(uid)));
   if (!rec) return null;
-  if (rec.auth) return rec.auth.accessToken;
-  return rec.accessToken || null; // ac 段账号记录直接存 accessToken
+  if (rec.auth) return wbStr(rec.auth.accessToken);
+  return wbStr(rec.accessToken); // ac 段账号记录直接存 accessToken
 }
 
 /** AutoClaw 调试端口（CDP）是否已在监听（复用中，无需重复拉起） */
@@ -2077,8 +3342,11 @@ function acLaunchBinary() {
     if (up) { log('[client:ac] CDP 已在监听，复用现有 AutoClaw'); return 'reuse'; }
     const exe = isMac
       ? '/Applications/AutoClaw.app/Contents/MacOS/AutoClaw'
-      : ['D:/Program Files/AutoClaw/AutoClaw.exe',
+      : ['D:/Program Files/AutoClaw2/AutoClaw2.exe', // 新版：安装目录与 exe 都改名 AutoClaw2
+         'D:/Program Files/AutoClaw/AutoClaw.exe',
+         path.join(process.env.ProgramFiles || 'C:/Program Files', 'AutoClaw2', 'AutoClaw2.exe'),
          path.join(process.env.ProgramFiles || 'C:/Program Files', 'AutoClaw', 'AutoClaw.exe'),
+         path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw2', 'AutoClaw2.exe'),
          path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoClaw', 'AutoClaw.exe')]
         .find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } });
     if (!exe) throw new Error('未找到 AutoClaw 可执行文件');
@@ -2396,7 +3664,12 @@ async function acFetchCredits(accessToken) {
 
 async function clientDailyCheckin(profileId, accessToken) {
   if (profileId === 'ca') return { ok: false, message: 'CodeArts Agent 无签到（额度按官方政策自动发放）' };
-  if (profileId === 'ac') return acDailyCheckin(accessToken);
+  if (profileId === 'zc') return { ok: false, message: 'ZCode 无每日签到' };
+  if (profileId === 'as') return asDailyCheckin(); // AStudio 每日积分：云端直连优先，CDP 兜底
+  if (profileId === 'ac') {
+    if (ac2IsNewLayout()) return { ok: false, message: 'AutoClaw2 无每日签到' };
+    return acDailyCheckin(accessToken);
+  }
   const profile = CLIENT_PROFILES[profileId];
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -2452,6 +3725,8 @@ async function clientDailyCheckin(profileId, accessToken) {
  */
 function clientSyncTokenExpiryAfterCheckin(profileId, uid, respBody) {
   if (profileId === 'ca') return; // CodeArts 无签到，有效期由 caSyncStore 维护
+  if (profileId === 'zc') return; // ZCode 无签到；有效期展示取 zcodejwttoken 的 exp
+  if (profileId === 'as') return; // AStudio 会话无到期字段（只有 loggedInAt），且下方 sec 三元会落到 ac 段
   // 各种形态 → 毫秒时间戳（数字秒/毫秒、数字字符串、ISO 日期字符串）
   const asMs = (v) => {
     if (v == null) return null;
@@ -2536,8 +3811,185 @@ function clientSyncTokenExpiryAfterCheckin(profileId, uid, respBody) {
     + (nextAuth.expiresAt ? new Date(nextAuth.expiresAt).toISOString() : '(无)'));
 }
 
+// ---------------- WorkBuddy 自动旅行（成长中心「派猫猫旅行」） ----------------
+// 规则（官方 ToS + 抓包实测）：每日 1 次（自然日重置），时长随机 1~4h，奖励 5~10 积分；
+// 到家后须在「下一次出发前」领取，逾期作废。4 个地点奖励完全相同 → 随机选。
+// API 逆向自 usercenter web（/activity/growth/buddy/travel/*），鉴权同签到（Bearer accessToken）。
+// 免启动（纯云端调用，不需要 WorkBuddy 客户端运行）。
+const WB_TRAVEL_BASE = 'https://www.workbuddy.cn';
+const WB_TRAVEL_RUN_INTERVAL_MS = 10 * 60 * 1000; // 节流：最多 10 分钟跑一轮（到点领取的精度足够）
+let wbTravelLastRunAt = 0;
+
+function wbTravelHeaders(token) {
+  return {
+    accept: 'application/json, text/plain, */*',
+    authorization: 'Bearer ' + token,
+    origin: 'https://www.workbuddy.cn',
+    referer: 'https://www.workbuddy.cn/profile/growth-center',
+    'content-type': 'application/json',
+    'x-client-platform': 'web',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0 Safari/537.36',
+  };
+}
+
+async function wbTravelGet(token, pathName) {
+  const r = await fetch(WB_TRAVEL_BASE + pathName, { headers: wbTravelHeaders(token), signal: AbortSignal.timeout(10000) });
+  const t = await r.text();
+  let o;
+  try { o = JSON.parse(t); } catch (_) { throw new Error('旅行接口响应解析失败 (HTTP ' + r.status + ')'); }
+  if (!r.ok || (o.code !== 0 && o.code !== undefined)) throw new Error(o.msg || ('HTTP ' + r.status));
+  return o.data || {};
+}
+
+/** 单账号旅行状态机：idle → 出发；traveling 且已到点 → 领取；其余跳过。
+ *  不做本地缓存 —— 旅行状态以服务端为准，每轮只多 1 个 GET。 */
+async function wbTravelAutomation(uid, nickname, token) {
+  const st = await wbTravelGet(token, '/activity/growth/buddy/travel/status');
+  const nowSec = Number(st.server_now || Math.floor(Date.now() / 1000));
+  const state = String(st.state || '');
+  const arriveAt = Number(st.arrive_at || 0);
+  const who = nickname || String(uid).slice(0, 8);
+  if (state === 'traveling' || state === 'completed') {
+    if (!arriveAt || arriveAt > nowSec) return; // 还在路上
+    const c = await fetch(WB_TRAVEL_BASE + '/activity/growth/buddy/travel/claim', {
+      method: 'POST', headers: wbTravelHeaders(token), body: '{}', signal: AbortSignal.timeout(10000),
+    });
+    const o = await c.json().catch(() => ({}));
+    if (c.ok && (o.code === 0 || o.code === undefined)) {
+      const reward = o.data && (o.data.reward_credit ?? o.data.credits);
+      log('[client:wb] 旅行奖励已领取（' + who + '）：+' + (reward != null ? reward : '?') + ' 积分');
+    } else {
+      log('[client:wb] 旅行奖励领取失败（' + who + '）：' + (o.msg || ('HTTP ' + c.status)));
+    }
+    return;
+  }
+  if (st.daily_limit_reached) return; // 今日已旅行（含已领取），明天再来
+  if (state !== 'idle') return; // 其他状态（如未接受活动协议）不自动处理
+  let locations = [];
+  try { locations = (await wbTravelGet(token, '/activity/growth/buddy/travel/config')).locations || []; } catch (_) {}
+  const loc = locations.length ? locations[Math.floor(Math.random() * locations.length)] : { id: 1, name: '咖啡馆' };
+  const d = await fetch(WB_TRAVEL_BASE + '/activity/growth/buddy/travel/depart', {
+    method: 'POST', headers: wbTravelHeaders(token), body: JSON.stringify({ location_id: loc.id }), signal: AbortSignal.timeout(10000),
+  });
+  const o = await d.json().catch(() => ({}));
+  if (!d.ok || o.code !== 0) { log('[client:wb] 派旅行失败（' + who + '）：' + (o.msg || ('HTTP ' + d.status))); return; }
+  const dur = (o.data && (o.data.duration_hours || (o.data.location && o.data.location.duration_hours))) || '?';
+  log('[client:wb] 已派 Buddy 旅行（' + who + '）：' + (loc.name || '') + '，时长 ' + dur + 'h，预计 +5~10 积分');
+}
+
+// ---------------- WorkBuddy 成长空间：自动旅行（云端直连，免启动客户端） ----------------
+// 逆向自 usercenter 前端 growthSpace 分包。旅行 = 伙伴（buddy）外出 1-4 小时，到达后
+// 领取积分（5-10/次，每日上限 3 次），不消耗体力（体力用于开蛋/抽卡，不在本功能范围）。
+// 鉴权与 wb 签到一致：Bearer accessToken。全部是 www.workbuddy.cn 的云端调用 —— 免启动。
+const WB_GROWTH_BASE = 'https://www.workbuddy.cn';
+const wbTravelState = Object.create(null); // uid → 最近一次旅行循环结果（内存，仅供账号列表展示）
+
+function wbGrowthHeaders(accessToken) {
+  return {
+    accept: 'application/json',
+    authorization: 'Bearer ' + accessToken,
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+  };
+}
+
+async function wbGrowthGet(pathName, accessToken) {
+  const r = await fetch(WB_GROWTH_BASE + pathName, { headers: wbGrowthHeaders(accessToken), signal: AbortSignal.timeout(10000) });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || j.code !== 0) {
+    throw new Error('成长空间接口失败 (HTTP ' + r.status + '): ' + String((j && j.msg) || '').slice(0, 80));
+  }
+  return j.data || {};
+}
+
+async function wbGrowthPost(pathName, body, accessToken) {
+  const r = await fetch(WB_GROWTH_BASE + pathName, {
+    method: 'POST',
+    headers: Object.assign({}, wbGrowthHeaders(accessToken), { 'content-type': 'application/json' }),
+    body: JSON.stringify(body === undefined ? {} : body),
+    signal: AbortSignal.timeout(10000),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || j.code !== 0) {
+    throw new Error('成长空间接口失败 (HTTP ' + r.status + '): ' + String((j && j.msg) || '').slice(0, 80));
+  }
+  return j.data || {};
+}
+
+/** 单次旅行循环：到达→领取（空 body，服务端按登录态找未领记录）；
+ *  未达每日上限→随机选地点出发；旅行中→返回倒计时信息。 */
+async function wbTravelCycle(accessToken) {
+  const st = await wbGrowthGet('/activity/growth/buddy/travel/status', accessToken);
+  const now = Number(st.server_now || Math.floor(Date.now() / 1000));
+  const arrive = Number(st.arrive_at || 0);
+  const locName = (st.location && st.location.name) || '';
+  // 1) 旅行中且未到达 → 只报状态
+  if (st.state === 'traveling' && arrive > now) {
+    return {
+      state: 'traveling', locationName: locName, arriveInSec: arrive - now,
+      rewardCredit: Number(st.reward_credit || 0), dailyLimitReached: !!st.daily_limit_reached,
+      recordId: Number(st.record_id || 0), // UI 据此识别「新出发」并提示
+    };
+  }
+  // 2) 已到达（state=arrived 或旅行时间已过）→ 领取（claim 空 body）
+  let claimed = 0;
+  if (st.state === 'arrived' || (st.record_id && arrive && arrive <= now)) {
+    await wbGrowthPost('/activity/growth/buddy/travel/claim', {}, accessToken);
+    claimed = Number(st.reward_credit || 0);
+  }
+  // 3) 今日次数已用完 → 不再出发；拉旅行记录取「最近一次已领取的奖励」供徽章展示
+  if (st.daily_limit_reached) {
+    let credited = claimed;
+    let lastLoc = locName;
+    try {
+      const recs = ((await wbGrowthGet('/activity/growth/buddy/travel/records?page=1&page_size=3', accessToken)).records) || [];
+      const lastRec = recs.find((x) => x.claimed_at) || recs[0] || null;
+      if (lastRec) {
+        credited = Number(lastRec.reward_credit || 0) || credited;
+        lastLoc = (lastRec.location && lastRec.location.name) || lastLoc;
+      }
+    } catch (_) {}
+    return { state: 'idle', dailyLimitReached: true, claimedCredit: credited, locationName: lastLoc };
+  }
+  // 4) 随机选一个地点出发
+  const cfg = await wbGrowthGet('/activity/growth/buddy/travel/config', accessToken);
+  const locs = cfg.locations || [];
+  if (!locs.length) return { state: 'idle', dailyLimitReached: !!st.daily_limit_reached, claimedCredit: claimed };
+  const loc = locs[Math.floor(Math.random() * locs.length)];
+  await wbGrowthPost('/activity/growth/buddy/travel/depart', { location_id: loc.id }, accessToken);
+  return {
+    state: 'traveling', locationName: loc.name,
+    arriveInSec: (loc.duration_hours || 1) * 3600, rewardCredit: Number(loc.reward_credit_min || 0),
+    claimedCredit: claimed, departNow: true,
+  };
+}
+
+/** 为单个账号跑旅行循环（取 token → 循环 → 记录状态），异常只记日志不抛出。
+ *  60 秒节流：账号列表每次刷新都会触发批量，避免每个账号每轮打 1-4 次云端。 */
+async function wbTravelCycleFor(profileId, uid, nickname, tkHint) {
+  if (profileId !== 'wb') return;
+  const last = wbTravelState[uid];
+  if (last && last.checkedAt && Date.now() - last.checkedAt < 60_000 && !last.error) return;
+  try {
+    const tk = tkHint || (await clientTokenFor(profileId, uid));
+    if (!tk) { wbTravelState[uid] = { error: '无 accessToken', checkedAt: Date.now() }; return; }
+    const tr = await wbTravelCycle(tk);
+    const prev = wbTravelState[uid] || {};
+    wbTravelState[uid] = Object.assign({ checkedAt: Date.now() }, tr, {
+      // 保留上次领取额：idle（今日已领完）状态下徽章要显示「已到账 +N」
+      claimedCredit: tr.claimedCredit || prev.claimedCredit || 0,
+    });
+    if (tr.claimedCredit) log('[client:wb] ' + (nickname || uid) + ' 旅行归来 +' + tr.claimedCredit + ' 积分');
+    else if (tr.departNow) log('[client:wb] ' + (nickname || uid) + ' 已出发旅行 → ' + (tr.locationName || '') + '（奖励约 ' + tr.rewardCredit + ' 积分）');
+  } catch (e) {
+    wbTravelState[uid] = { error: e.message, checkedAt: Date.now() };
+    log('[client:wb] ' + (nickname || uid) + ' 自动旅行失败: ' + e.message);
+  }
+}
+
 async function clientClaimDailyForAll(profileId) {
   if (profileId === 'ca') return { skipped: true, reason: 'no-checkin' }; // CodeArts 无签到，不进入签到轮
+  if (profileId === 'zc') return { skipped: true, reason: 'no-checkin' }; // ZCode 无签到，仅账号备份/切换
+  if (profileId === 'ac' && ac2IsNewLayout()) return { skipped: true, reason: 'no-checkin' }; // AutoClaw2 无每日签到
   const st = clientCheckinState[profileId];
   if (st.inFlight || clientClaimGlobalLock) return { skipped: true, reason: 'in-flight' };
   // AutoClaw 首次读账号前确保 AES key 已就绪（异步，12s 硬超时；失败则本轮按无 key 处理）
@@ -2560,9 +4012,18 @@ async function clientClaimDailyForAll(profileId) {
       if (hit && hit.date === today && hit.ok) {
         st.done++;
         results.push({ uid: a.uid, nickname: a.nickname || a.uid, ok: true, already: !!hit.already, msg: hit.message || '今日已签' });
+        // 已签到的账号也要跑旅行循环（到达自动领取 / 未达上限自动再出发）
+        await wbTravelCycleFor(profileId, a.uid, a.nickname);
         continue;
       }
-      const tk = clientTokenFor(profileId, a.uid);
+      const tk = await clientTokenFor(profileId, a.uid);
+      if (!tk && profileId === 'as') {
+        // AStudio 本地服务只服务当前登录账号：其余备份账号静默跳过。
+        // 不写签到缓存（否则卡片会被标成「未签」），故下一轮会再试一次，代价仅一次文件读取。
+        st.done++;
+        results.push({ uid: a.uid, nickname: a.nickname || a.uid, ok: false, already: false, skipped: true, msg: '仅当前登录账号可签到' });
+        continue;
+      }
       let rec;
       let respBody = null;
       if (!tk) rec = { date: today, ok: false, code: -1, message: '无 accessToken' };
@@ -2596,7 +4057,24 @@ async function clientClaimDailyForAll(profileId) {
       st.done++;
       results.push({ uid: a.uid, nickname: a.nickname || a.uid, ok: !!rec.ok, already: !!rec.already, msg: rec.message || '' });
       log('[client:' + profileId + '] ' + a.nickname + ' 签到: ' + (rec.ok ? (rec.already ? '已签' : '成功') : rec.message));
+      // WorkBuddy 成长空间：自动旅行（到达领取 → 未达上限自动出发；云端免启动）
+      if (profileId === 'wb') await wbTravelCycleFor(profileId, a.uid, a.nickname, tk);
       await sleep(500);
+    }
+    // WorkBuddy 自动旅行：每账号每天 1 次出发 + 到点自动领取。
+    // 10 分钟节流 —— 签到轮会被 /accounts 轮询频繁触发，旅行状态以服务端为准，无需本地缓存。
+    if (profileId === 'wb' && Date.now() - wbTravelLastRunAt > WB_TRAVEL_RUN_INTERVAL_MS) {
+      wbTravelLastRunAt = Date.now();
+      for (const a of accounts) {
+        try {
+          const tk = await clientTokenFor(profileId, a.uid);
+          if (!tk) continue; // 无可用 token（5.6+ 信封等）→ 跳过该账号的旅行
+          await wbTravelAutomation(a.uid, a.nickname, tk);
+          await sleep(300);
+        } catch (e) {
+          log('[client:wb] 旅行自动化失败 ' + (a.nickname || a.uid) + ': ' + e.message);
+        }
+      }
     }
   } finally {
     st.inFlight = false;
@@ -2622,7 +4100,12 @@ function clientBuildResourceBody(now) {
 
 async function clientFetchCredits(profileId, accessToken) {
   if (profileId === 'ca') throw new Error('CodeArts Agent 额度按官方政策自动发放，无积分查询接口');
-  if (profileId === 'ac') return acFetchCredits(accessToken);
+  if (profileId === 'zc') throw new Error('ZCode 无积分查询接口（仅账号备份/切换）');
+  if (profileId === 'as') return asFetchCredits(); // AStudio 积分：云端直连优先，CDP 兜底
+  if (profileId === 'ac') {
+    if (ac2IsNewLayout()) return ac2FetchCreditsViaCdp(); // AutoClaw2：CDP 渲染进程 zworkAuth
+    return acFetchCredits(accessToken); // 旧版 AutoClaw：HTTP + 解密 token
+  }
   const profile = CLIENT_PROFILES[profileId];
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -2712,10 +4195,12 @@ async function clientReloadViaCdp(profileId) {
 
 // 登录文件变化 → 同步进账号库（每次打开/切换客户端都会重写 auth 文件）
 // AutoClaw 的同步要先异步解密（key 缓存+树杀超时），不能同步阻塞事件循环
-for (const pid of ['wb', 'cb', 'ac']) {
+for (const pid of ['wb', 'cb', 'ac', 'as', 'zc']) {
   try {
-    fs.watchFile(CLIENT_PROFILES[pid].authFile, { interval: 5000 }, (cur, prev) => {
-      if (!fs.existsSync(CLIENT_PROFILES[pid].authFile)) return;
+    const authFile = pid === 'zc' ? zcCredFilePath() : CLIENT_PROFILES[pid].authFile;
+    if (!authFile) continue; // AStudio 未安装 / ZCode 未登录时 authFile 为 null
+    fs.watchFile(authFile, { interval: 5000 }, (cur, prev) => {
+      if (!fs.existsSync(authFile)) return;
       if (cur.mtimeMs !== prev.mtimeMs) {
         const sync = () => { try { clientSyncStore(pid); log('[client:' + pid + '] 登录文件变化，已同步账号库'); } catch (_) {} };
         if (pid === 'ac') acRequestKey().then(sync).catch(() => {});
@@ -3206,10 +4691,12 @@ const server = http.createServer(async (req, res) => {
       if (parts[4] === 'status') {
         const st = clientCheckinState[pid];
         let cdpConnected = false;
-        try {
-          const r = await fetch('http://127.0.0.1:' + CLIENT_PROFILES[pid].cdpPort + '/json/version', { signal: AbortSignal.timeout(1500) });
-          cdpConnected = r.ok;
-        } catch (_) {}
+        if (CLIENT_PROFILES[pid].cdpPort) {
+          try {
+            const r = await fetch('http://127.0.0.1:' + CLIENT_PROFILES[pid].cdpPort + '/json/version', { signal: AbortSignal.timeout(1500) });
+            cdpConnected = r.ok;
+          } catch (_) {}
+        }
         return sendJson(res, 200, {
           ok: true,
           profile: { id: pid, name: CLIENT_PROFILES[pid].name },
@@ -3235,6 +4722,18 @@ const server = http.createServer(async (req, res) => {
           const list2 = caListAccounts();
           return sendJson(res, 200, { ok: true, ...list2, batch: clientCheckinState.ca });
         }
+        if (pid === 'as') {
+          // 刷新当前账号信息：云端直连优先（无需启动 AStudio），CDP 兜底；
+          // 失败只记日志，仍返回账号库备份
+          try { await asRefreshCurrentAccount(); }
+          catch (e) { log('[client:as] 刷新当前账号不可用（仅展示账号库备份）: ' + e.message); }
+          return sendJson(res, 200, { ok: true, ...asListAccounts(), batch: clientCheckinState.as });
+        }
+        if (pid === 'zc') {
+          // ZCode：先把凭据文件当前登录并入账号库（拉取同时即完成备份），再返回列表
+          try { zcSyncStore(); } catch (e) { log('[client:zc] 同步登录态失败: ' + e.message); }
+          return sendJson(res, 200, { ok: true, ...zcListAccounts(), batch: clientCheckinState.zc });
+        }
         const list = clientListAccounts(pid);
         return sendJson(res, 200, { ok: true, ...list, batch: clientCheckinState[pid] });
       }
@@ -3252,8 +4751,9 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (parts[4] === 'credits') {
         if (pid === 'ca') return sendJson(res, 400, { ok: false, error: 'CodeArts Agent 额度按官方政策自动发放，无积分查询接口' });
+        if (pid === 'zc') return sendJson(res, 400, { ok: false, error: 'ZCode 无积分查询接口（仅账号备份/切换）' });
         const uid = (body.uid || '').trim();
-        const tk = clientTokenFor(pid, uid);
+        const tk = await clientTokenFor(pid, uid);
         if (!tk) return sendJson(res, 404, { ok: false, error: '账号备份不存在或无 accessToken' });
         try {
           const r = await clientFetchCredits(pid, tk);
@@ -3275,10 +4775,53 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 500, { ok: false, error: e.message });
           }
         }
+        if (pid === 'as') {
+          // AStudio：停客户端 → 写 astron-session.json + 两份 config.toml → 带 CDP 重启
+          try {
+            const r = await asSwitchToAccount(uid);
+            return sendJson(res, 200, {
+              ok: true, uid, nickname: r.nickname, reloaded: !!r.relaunched, alreadyCurrent: !!r.alreadyCurrent,
+              hint: r.alreadyCurrent ? '该账号已是当前登录账号'
+                : r.relaunched ? '已切换并重启 AStudio' : '已切换到该账号；下次启动 AStudio 时生效',
+            });
+          } catch (e) {
+            log('[client:as] 切换失败: ' + e.message);
+            return sendJson(res, 500, { ok: false, error: e.message });
+          }
+        }
+        if (pid === 'zc') {
+          // ZCode：停客户端 → 写回备份凭据整文件 → 重启（凭据加密可在 Node 内完整还原）
+          try {
+            const r = await zcSwitchToAccount(uid);
+            return sendJson(res, 200, {
+              ok: true, uid, nickname: r.nickname, reloaded: !!r.relaunched, alreadyCurrent: !!r.alreadyCurrent,
+              hint: r.alreadyCurrent ? '该账号已是当前登录账号'
+                : r.relaunched ? '已切换并重启 ZCode' : '已切换到该账号；下次启动 ZCode 时生效',
+            });
+          } catch (e) {
+            log('[client:zc] 切换失败: ' + e.message);
+            return sendJson(res, 500, { ok: false, error: e.message });
+          }
+        }
         const store = loadStore();
         const sec = store[pid === 'wb' ? 'workbuddy' : pid === 'cb' ? 'codebuddy' : 'ac'];
+        if (pid === 'ac' && ac2IsNewLayout()) {
+          // AutoClaw2：原生多账号（accounts/<key>/），切换 = 翻 active-product-account.json
+          // 指针 + 重启客户端（凭据由它自己解密载入，app-bound 外部解不开）
+          try {
+            const r = await ac2SwitchToAccount(uid);
+            return sendJson(res, 200, {
+              ok: true, uid, nickname: r.nickname, reloaded: !!r.relaunched, alreadyCurrent: !!r.alreadyCurrent,
+              hint: r.alreadyCurrent ? '该账号已是当前登录账号'
+                : r.relaunched ? '已切换并重启 AutoClaw2' : '已切换到该账号；下次启动 AutoClaw2 时生效',
+            });
+          } catch (e) {
+            log('[client:ac] 切换失败: ' + e.message);
+            return sendJson(res, 500, { ok: false, error: e.message });
+          }
+        }
         if (pid === 'ac') {
-          // AutoClaw：登录态只有本机一份（auth.json），无多账号文件可切换；
+          // 旧版 AutoClaw：登录态只有本机一份（auth.json），无多账号文件可切换；
           // 备份库里的其他账号只有 accessToken，回写会破坏 safeStorage 加密一致性，不支持
           return sendJson(res, 400, { ok: false, error: 'AutoClaw 暂不支持多账号切换（登录态由 AutoClaw 客户端管理）' });
         }
@@ -3299,9 +4842,9 @@ const server = http.createServer(async (req, res) => {
       if (parts[4] === 'delete') {
         const uid = (body.uid || '').trim();
         const store = loadStore();
-        const sec = pid === 'ca' ? store.codearts : store[pid === 'wb' ? 'workbuddy' : pid === 'cb' ? 'codebuddy' : 'ac'];
+        const sec = pid === 'ca' ? store.codearts : pid === 'as' ? store.as : pid === 'zc' ? store.zc : store[pid === 'wb' ? 'workbuddy' : pid === 'cb' ? 'codebuddy' : 'ac'];
         const before = sec.accounts.length;
-        if (pid === 'ac' || pid === 'ca') {
+        if (pid === 'ac' || pid === 'ca' || pid === 'as' || pid === 'zc') {
           sec.accounts = sec.accounts.filter((a) => a && String(a.uid) !== String(uid));
         } else {
           sec.accounts = sec.accounts.filter((a) => a && a.account && String(a.account.uid) !== String(uid));
@@ -3383,7 +4926,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       const s = loadSettings();
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, acLaunchOnStart: !!s.acLaunchOnStart, caLaunchOnStart: !!s.caLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: normalizeTabOrder(s.tabOrder) || ['wb', 'cb', 'ac', 'ca', 'tw'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, acLaunchOnStart: !!s.acLaunchOnStart, caLaunchOnStart: !!s.caLaunchOnStart, asLaunchOnStart: !!s.asLaunchOnStart, zcLaunchOnStart: !!s.zcLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: normalizeTabOrder(s.tabOrder) || ['wb', 'cb', 'ac', 'ca', 'as', 'zc', 'tw'] });
     }
     if (req.method === 'POST' && url.pathname === '/api/config') {
       const body = await readBody(req);
@@ -3395,6 +4938,8 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.cbLaunchOnStart === 'boolean') patch.cbLaunchOnStart = body.cbLaunchOnStart;
       if (typeof body.acLaunchOnStart === 'boolean') patch.acLaunchOnStart = body.acLaunchOnStart;
       if (typeof body.caLaunchOnStart === 'boolean') patch.caLaunchOnStart = body.caLaunchOnStart;
+      if (typeof body.asLaunchOnStart === 'boolean') patch.asLaunchOnStart = body.asLaunchOnStart;
+      if (typeof body.zcLaunchOnStart === 'boolean') patch.zcLaunchOnStart = body.zcLaunchOnStart;
       if (typeof body.hidePet === 'boolean') patch.hidePet = body.hidePet;
       if (typeof body.tabShowText === 'boolean') patch.tabShowText = body.tabShowText;
       if (Array.isArray(body.tabOrder)) {
@@ -3403,7 +4948,7 @@ const server = http.createServer(async (req, res) => {
       }
       const s = saveSettings(patch);
       log('[config] 已保存设置: ' + JSON.stringify(patch));
-      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, acLaunchOnStart: !!s.acLaunchOnStart, caLaunchOnStart: !!s.caLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: normalizeTabOrder(s.tabOrder) || ['wb', 'cb', 'ac', 'ca', 'tw'] });
+      return sendJson(res, 200, { ok: true, launchHostOnStart: !!s.launchHostOnStart, wbLaunchOnStart: !!s.wbLaunchOnStart, showPhone: !!s.showPhone, fontScale: Number(s.fontScale ?? 1), cbLaunchOnStart: !!s.cbLaunchOnStart, acLaunchOnStart: !!s.acLaunchOnStart, caLaunchOnStart: !!s.caLaunchOnStart, asLaunchOnStart: !!s.asLaunchOnStart, zcLaunchOnStart: !!s.zcLaunchOnStart, hidePet: !!s.hidePet, tabShowText: !!s.tabShowText, tabOrder: normalizeTabOrder(s.tabOrder) || ['wb', 'cb', 'ac', 'ca', 'as', 'zc', 'tw'] });
     }
     if (req.method === 'GET' && url.pathname === '/api/check-update') {
       try {
@@ -3627,6 +5172,8 @@ function killAutoClaw() {
     try { execFileSync('pkill', ['-9', '-f', 'AutoClaw Helper'], { stdio: 'ignore' }); } catch (_) {}
     try { execFileSync('osascript', ['-e', 'tell application "AutoClaw" to quit'], { stdio: 'ignore' }); } catch (_) {}
   } else {
+    // AutoClaw2（新版 exe 改名 AutoClaw2.exe）与旧版 AutoClaw.exe 都尝试关掉
+    try { execFileSync('taskkill', ['/IM', 'AutoClaw2.exe', '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
     try { execFileSync('taskkill', ['/IM', 'AutoClaw.exe', '/F', '/T'], { stdio: 'ignore', windowsHide: true }); } catch (_) {}
   }
 }
